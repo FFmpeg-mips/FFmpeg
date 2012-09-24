@@ -145,6 +145,7 @@ void ff_fmt_convert_init_arm(FmtConvertContext *c, AVCodecContext *avctx);
 void ff_fmt_convert_init_altivec(FmtConvertContext *c, AVCodecContext *avctx);
 void ff_fmt_convert_init_x86(FmtConvertContext *c, AVCodecContext *avctx);
 void ff_fmt_convert_init_mips(FmtConvertContext *c);
+void ff_fmt_convert_init_mips_fixed(FmtConvertContext *c, AVCodecContext *avctx);
 
 /* ffdshow custom code */
 void float_interleave(float *dst, const float **src, long len, int channels);

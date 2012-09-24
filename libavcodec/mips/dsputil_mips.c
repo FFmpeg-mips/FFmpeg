@@ -26,7 +26,8 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Author:  Zoran Lukic (zoranl@mips.com)
+ * Authors:  Zoran Lukic    (zoranl@mips.com)
+ *           Nedeljko Babic (nbabic@mips.com)
  *
  * This file is part of FFmpeg.
  *
@@ -48,6 +49,7 @@
 #include "libavcodec/dsputil.h"
 
 #if HAVE_INLINE_ASM
+#if HAVE_MIPSFPU
 static void vector_fmul_window_mips(float *dst, const float *src0,
         const float *src1, const float *win, int len)
 {
@@ -158,11 +160,101 @@ static void vector_fmul_window_mips(float *dst, const float *src0,
         );
     }
 }
+#endif
+
+#if HAVE_MIPSDSPR1
+static void vector_fmul_window_mips_fixed(int *dst, const int32_t *src0,
+                                       const int32_t *src1, const int32_t *win, int len)
+{
+    int32_t s0, s1, wi, wj, d0, d1;
+    const int32_t *win1;
+    int *dst1;
+
+    src1 += len - 1;
+    dst1 = dst + 2*len - 1;
+    win1 = win + 2*len - 1;
+
+    /**
+    * loop is unrolled four times and instructions
+    * are scheduled to minimize pipeline stalls
+    */
+    __asm__ volatile(
+        "1:                                 \n\t"
+        "lw     %[s0],      0(%[src0])      \n\t"
+        "lw     %[s1],      0(%[src1])      \n\t"
+        "lw     %[wi],      0(%[win])       \n\t"
+        "lw     %[wj],      0(%[win1])      \n\t"
+        "mult   $ac0,       %[s0],  %[wj]   \n\t"
+        "msub   $ac0,       %[s1],  %[wi]   \n\t"
+        "mult   $ac1,       %[s0],  %[wi]   \n\t"
+        "madd   $ac1,       %[s1],  %[wj]   \n\t"
+        "lw     %[s0],      4(%[src0])      \n\t"
+        "lw     %[s1],      -4(%[src1])     \n\t"
+        "lw     %[wi],      4(%[win])       \n\t"
+        "extr_r.w   %[d0],  $ac0,   31      \n\t"
+        "extr_r.w   %[d1],  $ac1,   31      \n\t"
+        "lw     %[wj],      -4(%[win1])     \n\t"
+        "mult   $ac2,       %[s0],  %[wj]   \n\t"
+        "msub   $ac2,       %[s1],  %[wi]   \n\t"
+        "mult   $ac3,       %[s0],  %[wi]   \n\t"
+        "madd   $ac3,       %[s1],  %[wj]   \n\t"
+        "sw     %[d0],      0(%[dst])       \n\t"
+        "sw     %[d1],      0(%[dst1])      \n\t"
+        "lw     %[s0],      8(%[src0])      \n\t"
+        "lw     %[s1],      -8(%[src1])     \n\t"
+        "extr_r.w   %[d0],  $ac2,   31      \n\t"
+        "extr_r.w   %[d1],  $ac3,   31      \n\t"
+        "lw     %[wi],      8(%[win])       \n\t"
+        "lw     %[wj],      -8(%[win1])     \n\t"
+        "mult   $ac0,       %[s0],  %[wj]   \n\t"
+        "msub   $ac0,       %[s1],  %[wi]   \n\t"
+        "mult   $ac1,       %[s0],  %[wi]   \n\t"
+        "madd   $ac1,       %[s1],  %[wj]   \n\t"
+        "sw     %[d0],      4(%[dst])       \n\t"
+        "sw     %[d1],      -4(%[dst1])     \n\t"
+        "lw     %[s0],      12(%[src0])     \n\t"
+        "extr_r.w   %[d0],  $ac0,   31      \n\t"
+        "extr_r.w   %[d1],  $ac1,   31      \n\t"
+        "lw     %[s1],      -12(%[src1])    \n\t"
+        "lw     %[wi],      12(%[win])      \n\t"
+        "lw     %[wj],      -12(%[win1])    \n\t"
+        "mult   $ac2,       %[s0],  %[wj]   \n\t"
+        "msub   $ac2,       %[s1],  %[wi]   \n\t"
+        "mult   $ac3,       %[s0],  %[wi]   \n\t"
+        "madd   $ac3,       %[s1],  %[wj]   \n\t"
+        "sw     %[d0],      8(%[dst])       \n\t"
+        "sw     %[d1],      -8(%[dst1])     \n\t"
+        "addiu  %[dst],     16              \n\t"
+        "addiu  %[dst1],    -16             \n\t"
+        "extr_r.w   %[d0],  $ac2,   31      \n\t"
+        "extr_r.w   %[d1],  $ac3,   31      \n\t"
+        "addiu  %[src0],    16              \n\t"
+        "addiu  %[src1],    -16             \n\t"
+        "addiu  %[win],     16              \n\t"
+        "addiu  %[win1],    -16             \n\t"
+        "sw     %[d0],      -4(%[dst])      \n\t"
+        "sw     %[d1],      4(%[dst1])      \n\t"
+        "blt    %[dst],     %[dst1],    1b  \n\t"
+        : [s0]"=&r"(s0), [s1]"=&r"(s1), [wi]"=&r"(wi),
+          [wj]"=&r"(wj), [src0]"+r"(src0), [src1]"+r"(src1),
+          [win]"+r"(win), [win1]"+r"(win1), [dst]"+r"(dst),
+          [dst1]"+r"(dst1), [d0]"=&r"(d0), [d1]"=&r"(d1)
+        :
+        : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+          "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+    );
+}
+#endif
 #endif /* HAVE_INLINE_ASM */
 
 av_cold void ff_dsputil_init_mips( DSPContext* c, AVCodecContext *avctx )
 {
 #if HAVE_INLINE_ASM
+#if HAVE_MIPSFPU
     c->vector_fmul_window = vector_fmul_window_mips;
 #endif
+#if HAVE_MIPSDSPR1
+    c->vector_fmul_window_fixed = vector_fmul_window_mips_fixed;
+#endif
+#endif /* HAVE_INLINE_ASM */
 }

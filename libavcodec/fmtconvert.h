@@ -38,6 +38,54 @@ typedef struct FmtConvertContext {
     void (*int32_to_float_fmul_scalar)(float *dst, const int *src, float mul, int len);
 
     /**
+     * Multiply a array of int32_t by a int32_t value and convert to int16_t.
+     * @param dst destination array of int16_t.
+     *            constraints: 16-byte aligned
+     * @param src source array of int32_t.
+     *            constraints: 16-byte aligned
+     * @param len number of elements in array.
+     *            constraints: multiple of 8
+     */
+    void (*int32_to_fixed_fmul_scalar)(int16_t *dst, const int *src, int mul, int len);
+    /**
+     * Convert an array of int32_t to an array of int16_t.
+     *
+     * @param dst destination array of int16_t.
+     *            constraints: 16-byte aligned
+     * @param src source array of int32_t.
+     *            constraints: 16-byte aligned
+     * @param len number of elements to convert.
+     *            constraints: multiple of 8
+     */
+    void (*fixed_to_int16)(int16_t *dst, const int *src, long len);
+    /**
+     * Convert multiple arrays of int32_t to an interleaved array of int16_t.
+     *
+     * @param dst destination array of interleaved int16_t.
+     *            constraints: 16-byte aligned
+     * @param src source array of int32_t arrays, one for each channel.
+     *            constraints: 16-byte aligned
+     * @param len number of elements to convert.
+     *            constraints: multiple of 8
+     * @param channels number of channels
+     */
+    void (*fixed_to_int16_interleave)(int16_t *dst, const int **src,
+                                      long len, int channels);
+    /**
+     * Convert multiple arrays of int32_t to an array of interleaved int32_t.
+     *
+     * @param dst destination array of interleaved int32_t.
+     *            constraints: 16-byte aligned
+     * @param src source array of int32_t arrays, one for each channel.
+     *            constraints: 16-byte aligned
+     * @param len number of elements to convert.
+     *            constraints: multiple of 8
+     * @param channels number of channels
+     */
+    void (*fixed_interleave)(int *dst, const int **src, unsigned int len,
+                             int channels);
+
+    /**
      * Convert an array of float to an array of int16_t.
      *
      * Convert floats from in the range [-32768.0,32767.0] to ints
@@ -86,6 +134,10 @@ typedef struct FmtConvertContext {
 
 void ff_float_interleave_c(float *dst, const float **src, unsigned int len,
                            int channels);
+
+void ff_fixed_interleave_c(int *dst, const int **src, unsigned int len,
+                           int channels);
+void fixed_interleave(int *dst, const int **src, unsigned int len, int channels);
 
 av_cold void ff_fmt_convert_init(FmtConvertContext *c, AVCodecContext *avctx);
 

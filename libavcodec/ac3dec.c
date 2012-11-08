@@ -64,7 +64,7 @@ static const uint8_t quantization_tab[16] = {
 static float dynamic_range_tab[256];
 
 /** Adjustments in dB gain */
-static const float gain_levels[9] = {
+static const INTFLOAT AC3_RENAME(gain_levels)[9] = {
     LEVEL_PLUS_3DB,
     LEVEL_PLUS_1POINT5DB,
     LEVEL_ONE,
@@ -166,7 +166,7 @@ static av_cold int ac3_decode_init(AVCodecContext *avctx)
     ac3_tables_init();
     ff_mdct_init(&s->imdct_256, 8, 1, 1.0);
     ff_mdct_init(&s->imdct_512, 9, 1, 1.0);
-    ff_kbd_window_init(s->window, 5.0, 256);
+    AC3_RENAME(ff_kbd_window_init)(s->window, 5.0, 256);
     ff_dsputil_init(&s->dsp, avctx);
     ff_ac3dsp_init(&s->ac3dsp, avctx->flags & CODEC_FLAG_BITEXACT);
     ff_fmt_convert_init(&s->fmt_conv, avctx);
@@ -174,10 +174,10 @@ static av_cold int ac3_decode_init(AVCodecContext *avctx)
 
     /* set scale value for float to int16 conversion */
     if (avctx->request_sample_fmt == AV_SAMPLE_FMT_FLT) {
-        s->mul_bias = 1.0f;
+        s->mul_bias = MUL_BIAS1;
         avctx->sample_fmt = AV_SAMPLE_FMT_FLT;
     } else {
-        s->mul_bias = 32767.0f;
+        s->mul_bias = MUL_BIAS2;
         avctx->sample_fmt = AV_SAMPLE_FMT_S16;
     }
 
@@ -299,23 +299,23 @@ static int parse_frame_header(AC3DecodeContext *s)
  * Set stereo downmixing coefficients based on frame header info.
  * reference: Section 7.8.2 Downmixing Into Two Channels
  */
-static void set_downmix_coeffs(AC3DecodeContext *s)
+static void AC3_RENAME(set_downmix_coeffs)(AC3DecodeContext *s)
 {
     int i;
-    float cmix = gain_levels[s->  center_mix_level];
-    float smix = gain_levels[s->surround_mix_level];
-    float norm0, norm1;
+    INTFLOAT cmix = AC3_RENAME(gain_levels)[s->  center_mix_level];
+    INTFLOAT smix = AC3_RENAME(gain_levels)[s->surround_mix_level];
+    INTFLOAT norm0, norm1;
 
     for (i = 0; i < s->fbw_channels; i++) {
-        s->downmix_coeffs[i][0] = gain_levels[ac3_default_coeffs[s->channel_mode][i][0]];
-        s->downmix_coeffs[i][1] = gain_levels[ac3_default_coeffs[s->channel_mode][i][1]];
+        s->downmix_coeffs[i][0] = AC3_RENAME(gain_levels)[ac3_default_coeffs[s->channel_mode][i][0]];
+        s->downmix_coeffs[i][1] = AC3_RENAME(gain_levels)[ac3_default_coeffs[s->channel_mode][i][1]];
     }
     if (s->channel_mode > 1 && s->channel_mode & 1) {
         s->downmix_coeffs[1][0] = s->downmix_coeffs[1][1] = cmix;
     }
     if (s->channel_mode == AC3_CHMODE_2F1R || s->channel_mode == AC3_CHMODE_3F1R) {
         int nf = s->channel_mode - 2;
-        s->downmix_coeffs[nf][0] = s->downmix_coeffs[nf][1] = smix * LEVEL_MINUS_3DB;
+        s->downmix_coeffs[nf][0] = s->downmix_coeffs[nf][1] = AC3_LEVEL(smix);
     }
     if (s->channel_mode == AC3_CHMODE_2F2R || s->channel_mode == AC3_CHMODE_3F2R) {
         int nf = s->channel_mode - 4;
@@ -323,22 +323,23 @@ static void set_downmix_coeffs(AC3DecodeContext *s)
     }
 
     /* renormalize */
-    norm0 = norm1 = 0.0;
+    norm0 = norm1 = FIXR(0.0);
     for (i = 0; i < s->fbw_channels; i++) {
         norm0 += s->downmix_coeffs[i][0];
         norm1 += s->downmix_coeffs[i][1];
     }
-    norm0 = 1.0f / norm0;
-    norm1 = 1.0f / norm1;
+
+    norm0 = AC3_NORM(norm0);
+    norm1 = AC3_NORM(norm1);
+
     for (i = 0; i < s->fbw_channels; i++) {
-        s->downmix_coeffs[i][0] *= norm0;
-        s->downmix_coeffs[i][1] *= norm1;
+        s->downmix_coeffs[i][0] = AC3_MUL(s->downmix_coeffs[i][0],norm0);
+        s->downmix_coeffs[i][1] = AC3_MUL(s->downmix_coeffs[i][1],norm1);
     }
 
     if (s->output_mode == AC3_CHMODE_MONO) {
         for (i = 0; i < s->fbw_channels; i++)
-            s->downmix_coeffs[i][0] = (s->downmix_coeffs[i][0] +
-                                       s->downmix_coeffs[i][1]) * LEVEL_MINUS_3DB;
+            s->downmix_coeffs[i][0] = AC3_LEVEL(s->downmix_coeffs[i][0] + s->downmix_coeffs[i][1]);
     }
 }
 
@@ -594,27 +595,56 @@ static void do_rematrixing(AC3DecodeContext *s)
  * Convert frequency domain coefficients to time-domain audio samples.
  * reference: Section 7.9.4 Transformation Equations
  */
-static inline void do_imdct(AC3DecodeContext *s, int channels)
+
+static inline void AC3_RENAME(do_imdct)(AC3DecodeContext *s, int channels)
 {
     int ch;
 
     for (ch = 1; ch <= channels; ch++) {
+#if CONFIG_AC3_FIXED
+        int dynrng;
+        if(s->channel_mode == AC3_CHMODE_DUALMONO) {
+            dynrng = s->dynamic_range[2-ch];
+        } else {
+            dynrng = s->dynamic_range[0];
+        }
+#endif
         if (s->block_switch[ch]) {
             int i;
-            float *x = s->tmp_output + 128;
+            FFTSample *x = s->tmp_output+128;
+
             for (i = 0; i < 128; i++)
-                x[i] = s->transform_coeffs[ch][2 * i];
+#if CONFIG_AC3_FIXED
+                x[i] = s->fixed_coeffs[ch][2*i];
+#else
+                x[i] = s->transform_coeffs[ch][2*i];
+#endif
             s->imdct_256.imdct_half(&s->imdct_256, s->tmp_output, x);
-            s->dsp.vector_fmul_window(s->output[ch - 1], s->delay[ch - 1],
+#if CONFIG_AC3_FIXED
+            scale_coefs(s->tmp_output, dynrng, 128);
+#endif
+            s->dsp.AC3_RENAME(vector_fmul_window)(s->output[ch - 1], s->delay[ch - 1],
                                       s->tmp_output, s->window, 128);
             for (i = 0; i < 128; i++)
-                x[i] = s->transform_coeffs[ch][2 * i + 1];
+#if CONFIG_AC3_FIXED
+               x[i] = s->fixed_coeffs[ch][2*i+1];
+#else
+               x[i] = s->transform_coeffs[ch][2*i+1];
+#endif
             s->imdct_256.imdct_half(&s->imdct_256, s->delay[ch - 1], x);
+#if CONFIG_AC3_FIXED
+            scale_coefs(s->delay[ch-1], dynrng, 128);
+#endif
         } else {
+#if CONFIG_AC3_FIXED
+            s->imdct_512.imdct_half(&s->imdct_512, s->tmp_output, s->fixed_coeffs[ch]);
+            scale_coefs(s->tmp_output, dynrng, 256);
+#else
             s->imdct_512.imdct_half(&s->imdct_512, s->tmp_output, s->transform_coeffs[ch]);
-            s->dsp.vector_fmul_window(s->output[ch - 1], s->delay[ch - 1],
+#endif
+            s->dsp.AC3_RENAME(vector_fmul_window)(s->output[ch - 1], s->delay[ch - 1],
                                       s->tmp_output, s->window, 128);
-            memcpy(s->delay[ch - 1], s->tmp_output + 128, 128 * sizeof(float));
+            memcpy(s->delay[ch - 1], s->tmp_output + 128, 128 * sizeof(FFTSample));
         }
     }
 }
@@ -719,10 +749,9 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
     i = !s->channel_mode;
     do {
         if (get_bits1(gbc)) {
-            s->dynamic_range[i] = ((dynamic_range_tab[get_bits(gbc, 8)] - 1.0) *
-                                  s->drc_scale) + 1.0;
+            s->dynamic_range[i] = AC3_DYNAMIC_RANGE(get_bits(gbc, 8));
         } else if (blk == 0) {
-            s->dynamic_range[i] = 1.0f;
+            s->dynamic_range[i] = AC3_DYNAMIC_RANGE1;
         }
     } while (i--);
 
@@ -748,6 +777,10 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
             if (start_subband > 7)
                 start_subband += start_subband - 7;
             end_subband    = get_bits(gbc, 3) + 5;
+#if CONFIG_AC3_FIXED
+            s->spx_dst_end_freq = end_freq_inv_tab[end_subband];
+            end_subband += 5;
+#endif
             if (end_subband   > 7)
                 end_subband   += end_subband   - 7;
             dst_start_freq = dst_start_freq * 12 + 25;
@@ -768,7 +801,9 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
 
             s->spx_dst_start_freq = dst_start_freq;
             s->spx_src_start_freq = src_start_freq;
+#if !CONFIG_AC3_FIXED
             s->spx_dst_end_freq   = dst_end_freq;
+#endif
 
             decode_band_structure(gbc, blk, s->eac3, 0,
                                   start_subband, end_subband,
@@ -788,18 +823,40 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
         for (ch = 1; ch <= fbw_channels; ch++) {
             if (s->channel_uses_spx[ch]) {
                 if (s->first_spx_coords[ch] || get_bits1(gbc)) {
-                    float spx_blend;
+                    INTFLOAT spx_blend;
                     int bin, master_spx_coord;
 
                     s->first_spx_coords[ch] = 0;
-                    spx_blend = get_bits(gbc, 5) * (1.0f/32);
+                    spx_blend = AC3_SPX_BLEND(get_bits(gbc, 5));
                     master_spx_coord = get_bits(gbc, 2) * 3;
 
                     bin = s->spx_src_start_freq;
                     for (bnd = 0; bnd < s->num_spx_bands; bnd++) {
                         int bandsize;
                         int spx_coord_exp, spx_coord_mant;
-                        float nratio, sblend, nblend, spx_coord;
+                        INTFLOAT nratio, sblend, nblend;
+#if CONFIG_AC3_FIXED
+                        int64_t accu;
+                        /* calculate blending factors */
+                        bandsize = s->spx_band_sizes[bnd];
+                        accu = (int64_t)((bin << 23) + (bandsize << 22)) * s->spx_dst_end_freq;
+                        nratio = (int)(accu >> 32);
+                        nratio -= spx_blend << 18;
+
+                        if (nratio < 0) {
+                            nblend = 0;
+                            sblend = 0x800000;
+                        } else if (nratio > 0x7fffff) {
+                            nblend = 0x800000;
+                            sblend = 0;
+                        } else {
+                            nblend = ac3_fixed_sqrt(nratio);
+                            accu = (int64_t)nblend * 1859775393;
+                            nblend = (int)((accu + (1<<29)) >> 30);
+                            sblend = ac3_fixed_sqrt(0x800000 - nratio);
+                        }
+#else
+                        float spx_coord;
 
                         /* calculate blending factors */
                         bandsize = s->spx_band_sizes[bnd];
@@ -808,6 +865,7 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
                         nblend = sqrtf(3.0f * nratio); // noise is scaled by sqrt(3)
                                                        // to give unity variance
                         sblend = sqrtf(1.0f - nratio);
+#endif
                         bin += bandsize;
 
                         /* decode spx coordinates */
@@ -816,11 +874,18 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
                         if (spx_coord_exp == 15) spx_coord_mant <<= 1;
                         else                     spx_coord_mant += 4;
                         spx_coord_mant <<= (25 - spx_coord_exp - master_spx_coord);
-                        spx_coord = spx_coord_mant * (1.0f / (1 << 23));
 
                         /* multiply noise and signal blending factors by spx coordinate */
+#if CONFIG_AC3_FIXED
+                        accu = (int64_t)nblend * spx_coord_mant;
+                        s->spx_noise_blend[ch][bnd]  = (int)((accu + (1<<22)) >> 23);
+                        accu = (int64_t)sblend * spx_coord_mant;
+                        s->spx_signal_blend[ch][bnd] = (int)((accu + (1<<22)) >> 23);
+#else
+                        spx_coord = spx_coord_mant * (1.0f / (1 << 23));
                         s->spx_noise_blend [ch][bnd] = nblend * spx_coord;
                         s->spx_signal_blend[ch][bnd] = sblend * spx_coord;
+#endif
                     }
                 }
             } else {
@@ -1176,6 +1241,16 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
         do_rematrixing(s);
 
     /* apply scaling to coefficients (headroom, dynrng) */
+#if CONFIG_AC3_FIXED
+    do_imdct_fixed(s, s->channels);
+
+    downmix_output = s->channels != s->out_channels &&
+                     !((s->output_mode & AC3_OUTPUT_LFEON) &&
+                     s->fbw_channels == s->out_channels);
+
+    if (downmix_output)
+      s->ac3dsp.downmix_fixed(s->output, s->downmix_coeffs, s->out_channels, s->fbw_channels, 256);
+#else
     for (ch = 1; ch <= s->channels; ch++) {
         float gain = s->mul_bias / 4194304.0f;
         if (s->channel_mode == AC3_CHMODE_DUALMONO) {
@@ -1203,6 +1278,7 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
 
     if (downmix_output)
         s->ac3dsp.downmix(s->output, s->downmix_coeffs, s->out_channels, s->fbw_channels, 256);
+#endif
 
     return 0;
 }
@@ -1216,11 +1292,11 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     AC3DecodeContext *s = avctx->priv_data;
-    float   *out_samples_flt;
+    INTFLOAT   *out_samples_flt;
     int16_t *out_samples_s16;
     int blk, ch, err, ret;
     const uint8_t *channel_map;
-    const float *output[AC3_MAX_CHANNELS];
+    const INTFLOAT *output[AC3_MAX_CHANNELS];
 
     /* copy input buffer to decoder context to avoid reading past the end
        of the buffer, which can be caused by a damaged input stream. */
@@ -1301,14 +1377,14 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
         avctx->channels       = s->out_channels;
         avctx->channel_layout = s->channel_layout;
 
-        s->loro_center_mix_level   = gain_levels[s->  center_mix_level];
-        s->loro_surround_mix_level = gain_levels[s->surround_mix_level];
+        s->loro_center_mix_level   = AC3_RENAME(gain_levels)[s->  center_mix_level];
+        s->loro_surround_mix_level = AC3_RENAME(gain_levels)[s->surround_mix_level];
         s->ltrt_center_mix_level   = LEVEL_MINUS_3DB;
         s->ltrt_surround_mix_level = LEVEL_MINUS_3DB;
         /* set downmixing coefficients if needed */
         if (s->channels != s->out_channels && !((s->output_mode & AC3_OUTPUT_LFEON) &&
                 s->fbw_channels == s->out_channels)) {
-            set_downmix_coeffs(s);
+            AC3_RENAME(set_downmix_coeffs)(s);
         }
     } else if (!s->out_channels) {
         s->out_channels = avctx->channels;
@@ -1331,7 +1407,7 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         return ret;
     }
-    out_samples_flt = (float   *)s->frame.data[0];
+    out_samples_flt = (INTFLOAT *)s->frame.data[0];
     out_samples_s16 = (int16_t *)s->frame.data[0];
 
     /* decode the audio blocks */
@@ -1344,11 +1420,11 @@ static int ac3_decode_frame(AVCodecContext * avctx, void *data,
             err = 1;
         }
         if (avctx->sample_fmt == AV_SAMPLE_FMT_FLT) {
-            s->fmt_conv.float_interleave(out_samples_flt, output, 256,
+            s->fmt_conv.TYPE_PREFIX(interleave)(out_samples_flt, output, 256,
                                          s->out_channels);
             out_samples_flt += 256 * s->out_channels;
         } else {
-            s->fmt_conv.float_to_int16_interleave(out_samples_s16, output, 256,
+            s->fmt_conv.TYPE_PREFIX(to_int16_interleave)(out_samples_s16, output, 256,
                                                   s->out_channels);
             out_samples_s16 += 256 * s->out_channels;
         }
@@ -1387,51 +1463,3 @@ static const AVOption options[] = {
 
     { NULL},
 };
-
-static const AVClass ac3_decoder_class = {
-    .class_name = "AC3 decoder",
-    .item_name  = av_default_item_name,
-    .option     = options,
-    .version    = LIBAVUTIL_VERSION_INT,
-};
-
-AVCodec ff_ac3_decoder = {
-    .name           = "ac3",
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_AC3,
-    .priv_data_size = sizeof (AC3DecodeContext),
-    .init           = ac3_decode_init,
-    .close          = ac3_decode_end,
-    .decode         = ac3_decode_frame,
-    .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("ATSC A/52A (AC-3)"),
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLT,
-                                                      AV_SAMPLE_FMT_S16,
-                                                      AV_SAMPLE_FMT_NONE },
-    .priv_class     = &ac3_decoder_class,
-};
-
-#if CONFIG_EAC3_DECODER
-static const AVClass eac3_decoder_class = {
-    .class_name = "E-AC3 decoder",
-    .item_name  = av_default_item_name,
-    .option     = options,
-    .version    = LIBAVUTIL_VERSION_INT,
-};
-
-AVCodec ff_eac3_decoder = {
-    .name           = "eac3",
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_EAC3,
-    .priv_data_size = sizeof (AC3DecodeContext),
-    .init           = ac3_decode_init,
-    .close          = ac3_decode_end,
-    .decode         = ac3_decode_frame,
-    .capabilities   = CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("ATSC A/52B (AC-3, E-AC-3)"),
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLT,
-                                                      AV_SAMPLE_FMT_S16,
-                                                      AV_SAMPLE_FMT_NONE },
-    .priv_class     = &eac3_decoder_class,
-};
-#endif

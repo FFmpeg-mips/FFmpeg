@@ -30,8 +30,19 @@ static void int32_to_float_fmul_scalar_c(float *dst, const int *src, float mul, 
         dst[i] = src[i] * mul;
 }
 
+static void int32_to_fixed_fmul_scalar_c(int16_t *dst, const int *src, int mul, int len) {
+    int i;
+    for(i=0; i<len; i++)
+    dst[i] = (src[i] * mul + 0x8000) >> 16;
+}
+
 static av_always_inline int float_to_int16_one(const float *src){
     return av_clip_int16(lrintf(*src));
+}
+
+static av_always_inline int fixed_to_int16_one(const int *src)
+{
+    return av_clip_int16_c(*src);
 }
 
 static void float_to_int16_c(int16_t *dst, const float *src, long len)
@@ -57,6 +68,35 @@ static void float_to_int16_interleave_c(int16_t *dst, const float **src,
     }
 }
 
+static void fixed_to_int16_interleave_c(int16_t *dst, const int **src,
+                                        long len, int channels)
+{
+    int i,j,c;
+    if(channels==2) {
+        for(i=0; i<len; i++) {
+            dst[2*i] = fixed_to_int16_one(src[0]+i);
+            dst[2*i+1] = fixed_to_int16_one(src[1]+i);
+        }
+    }
+    else {
+        if(channels==6) {
+            for(i=0; i<len; i++) {
+                dst[6*i] = fixed_to_int16_one(src[0]+i);
+                dst[6*i+1] = fixed_to_int16_one(src[1]+i);
+                dst[6*i+2] = fixed_to_int16_one(src[2]+i);
+                dst[6*i+3] = fixed_to_int16_one(src[3]+i);
+                dst[6*i+4] = fixed_to_int16_one(src[4]+i);
+                dst[6*i+5] = fixed_to_int16_one(src[5]+i);
+            }
+        }
+        else {
+            for(c=0; c<channels; c++)
+                for(i=0, j=c; i<len; i++, j+=channels)
+                    dst[j] = fixed_to_int16_one(src[c]+i);
+        }
+    }
+}
+
 void ff_float_interleave_c(float *dst, const float **src, unsigned int len,
                            int channels)
 {
@@ -76,9 +116,41 @@ void ff_float_interleave_c(float *dst, const float **src, unsigned int len,
     }
 }
 
+void ff_fixed_interleave_c(int *dst, const int **src, unsigned int len,
+                           int channels)
+{
+    int j, c;
+    unsigned int i;
+    if (channels == 6) {
+        for (i = 0; i < len; i++) {
+            dst[6*i]   = src[0][i];
+            dst[6*i+1] = src[1][i];
+            dst[6*i+2] = src[2][i];
+            dst[6*i+3] = src[3][i];
+            dst[6*i+4] = src[4][i];
+            dst[6*i+5] = src[5][i];
+        }
+    }
+    else if (channels == 2) {
+        for (i = 0; i < len; i++) {
+            dst[2*i]   = src[0][i];
+            dst[2*i+1] = src[1][i];
+        }
+    } else if (channels == 1 && len < INT_MAX / sizeof(int)) {
+        memcpy(dst, src[0], len * sizeof(int));
+    } else {
+        for (c = 0; c < channels; c++)
+            for (i = 0, j = c; i < len; i++, j += channels)
+                dst[j] = src[c][i];
+    }
+}
+
 av_cold void ff_fmt_convert_init(FmtConvertContext *c, AVCodecContext *avctx)
 {
     c->int32_to_float_fmul_scalar = int32_to_float_fmul_scalar_c;
+    c->int32_to_fixed_fmul_scalar = int32_to_fixed_fmul_scalar_c;
+    c->fixed_to_int16_interleave  = fixed_to_int16_interleave_c;
+    c->fixed_interleave           = ff_fixed_interleave_c;
     c->float_to_int16             = float_to_int16_c;
     c->float_to_int16_interleave  = float_to_int16_interleave_c;
     c->float_interleave           = ff_float_interleave_c;

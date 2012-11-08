@@ -51,16 +51,68 @@
 #define EXP_D25   2
 #define EXP_D45   3
 
+#ifndef CONFIG_AC3_FIXED
+#define CONFIG_AC3_FIXED 0
+#endif
+
+#if CONFIG_AC3_FIXED
+
+#define CONFIG_FFT_FLOAT 0
+
+#define FIXR(a)                 ((int)((a) * 0 + 0.5))
+#define FIXR12(a)               ((int)((a) * 4096 + 0.5))
+#define FIXR15(a)               ((int)((a) * 32768 + 0.5))
+#define FIXR16(a)               ((int)((a) * 65536 + 0.5))
+#define ROUND12(x)              ((x) + 2048) >> 12
+#define ROUND15(x)              ((x) + 16384) >> 15
+
+#define AC3_RENAME(x)           x ## _fixed
+#define AC3_NORM(norm)          (1<<12)/(norm)
+#define AC3_MUL(a,b)            (((int64_t) (a)) * (b))
+#define AC3_DYNAMIC_RANGE(x)    (x)
+#define AC3_SPX_BLEND(x)        (x)
+#define TYPE_PREFIX(x)          fixed_ ## x
+#define AC3_DYNAMIC_RANGE1      0
+#define INTFLOAT                int
+#define SHORTFLOAT              int16_t
+
+#else /* CONFIG_AC3_FIXED */
+
+#define FIXR(x)                 ((float)(x))
+#define FIXR12(x)               ((float)(x))
+#define FIXR15(x)               ((float)(x))
+#define FIXR16(x)               ((float)(x))
+#define ROUND12(x)              (x)
+#define ROUND15(x)              (x)
+
+#define AC3_RENAME(x)           x
+#define AC3_NORM(norm)          (1.0f/(norm))
+#define AC3_MUL(a,b)            ((a) * (b))
+#define AC3_DYNAMIC_RANGE(x)    ((dynamic_range_tab[x] - 1.0) * s->drc_scale) + 1.0
+#define AC3_SPX_BLEND(x)        (x)* (1.0f/32)
+#define TYPE_PREFIX(x)          float_ ## x
+
+#define AC3_DYNAMIC_RANGE1      1.0f
+#define INTFLOAT                float
+#define SHORTFLOAT              float
+
+#endif /* CONFIG_AC3_FIXED */
+
 /* pre-defined gain values */
-#define LEVEL_PLUS_3DB          1.4142135623730950
-#define LEVEL_PLUS_1POINT5DB    1.1892071150027209
-#define LEVEL_MINUS_1POINT5DB   0.8408964152537145
-#define LEVEL_MINUS_3DB         0.7071067811865476
-#define LEVEL_MINUS_4POINT5DB   0.5946035575013605
-#define LEVEL_MINUS_6DB         0.5000000000000000
-#define LEVEL_MINUS_9DB         0.3535533905932738
-#define LEVEL_ZERO              0.0000000000000000
-#define LEVEL_ONE               1.0000000000000000
+#define LEVEL_PLUS_3DB          FIXR12(1.4142135623730950)
+#define LEVEL_PLUS_1POINT5DB    FIXR12(1.1892071150027209)
+#define LEVEL_MINUS_1POINT5DB   FIXR12(0.8408964152537145)
+#define LEVEL_MINUS_3DB         FIXR12(0.7071067811865476)
+#define LEVEL_MINUS_4POINT5DB   FIXR12(0.5946035575013605)
+#define LEVEL_MINUS_6DB         FIXR12(0.5000000000000000)
+#define LEVEL_MINUS_9DB         FIXR12(0.3535533905932738)
+#define LEVEL_ZERO              FIXR12(0.0000000000000000)
+#define LEVEL_ONE               FIXR12(1.0000000000000000)
+
+#define MUL_BIAS1               FIXR16(1.0f    )
+#define MUL_BIAS2               FIXR16(32767.0f)
+
+#define AC3_LEVEL(x)            ROUND15((x) * FIXR15(LEVEL_MINUS_3DB))
 
 /** Delta bit allocation strategy */
 typedef enum {

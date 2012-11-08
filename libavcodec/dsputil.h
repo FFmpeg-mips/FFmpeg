@@ -390,6 +390,7 @@ typedef struct DSPContext {
     void (*vector_fmul_add)(float *dst, const float *src0, const float *src1, const float *src2, int len);
     /* assume len is a multiple of 4, and arrays are 16-byte aligned */
     void (*vector_fmul_window)(float *dst, const float *src0, const float *src1, const float *win, int len);
+    void (*vector_fmul_window_fixed)(int *dst, const int32_t *src0, const int32_t *src1, const int32_t *win, int len);
     /* assume len is a multiple of 8, and arrays are 16-byte aligned */
     void (*vector_clipf)(float *dst /* align 16 */, const float *src /* align 16 */, float min, float max, int len /* align 16 */);
     /**

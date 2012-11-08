@@ -2514,6 +2514,25 @@ static void vector_fmul_window_c(float *dst, const float *src0,
     }
 }
 
+static void vector_fmul_window_fixed_c(int *dst, const int32_t *src0,
+                                       const int32_t *src1, const int32_t *win, int len)
+{
+    int32_t s0, s1, wi, wj, i,j;
+
+    dst += len;
+    win += len;
+    src0+= len;
+
+    for (i=-len, j=len-1; i<0; i++, j--) {
+        s0 = src0[i];
+        s1 = src1[j];
+        wi = win[i];
+        wj = win[j];
+        dst[i] = (int32_t)(((int64_t)s0*wj - (int64_t)s1*wi + 0x40000000) >> 31);
+        dst[j] = (int32_t)(((int64_t)s0*wi + (int64_t)s1*wj + 0x40000000) >> 31);
+    }
+}
+
 static void butterflies_float_c(float *av_restrict v1, float *av_restrict v2,
                                 int len)
 {
@@ -3023,6 +3042,7 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
     c->vector_fmul_reverse = vector_fmul_reverse_c;
     c->vector_fmul_add = vector_fmul_add_c;
     c->vector_fmul_window = vector_fmul_window_c;
+    c->vector_fmul_window_fixed = vector_fmul_window_fixed_c;
     c->vector_clipf = vector_clipf_c;
     c->scalarproduct_int16 = scalarproduct_int16_c;
     c->scalarproduct_and_madd_int16 = scalarproduct_and_madd_int16_c;

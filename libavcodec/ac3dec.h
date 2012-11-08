@@ -130,8 +130,8 @@ typedef struct AC3DecodeContext {
     int num_spx_bands;                          ///< number of spx bands                    (nspxbnds)
     uint8_t spx_band_sizes[SPX_MAX_BANDS];      ///< number of bins in each spx band
     uint8_t first_spx_coords[AC3_MAX_CHANNELS]; ///< first spx coordinates states           (firstspxcos)
-    float spx_noise_blend[AC3_MAX_CHANNELS][SPX_MAX_BANDS]; ///< spx noise blending factor  (nblendfact)
-    float spx_signal_blend[AC3_MAX_CHANNELS][SPX_MAX_BANDS];///< spx signal blending factor (sblendfact)
+    INTFLOAT spx_noise_blend[AC3_MAX_CHANNELS][SPX_MAX_BANDS]; ///< spx noise blending factor  (nblendfact)
+    INTFLOAT spx_signal_blend[AC3_MAX_CHANNELS][SPX_MAX_BANDS];///< spx signal blending factor (sblendfact)
 ///@}
 
 ///@name Adaptive hybrid transform
@@ -143,15 +143,15 @@ typedef struct AC3DecodeContext {
     int fbw_channels;                           ///< number of full-bandwidth channels
     int channels;                               ///< number of total channels
     int lfe_ch;                                 ///< index of LFE channel
-    float downmix_coeffs[AC3_MAX_CHANNELS][2];  ///< stereo downmix coefficients
+    INTFLOAT downmix_coeffs[AC3_MAX_CHANNELS][2];  ///< stereo downmix coefficients
     int downmixed;                              ///< indicates if coeffs are currently downmixed
     int output_mode;                            ///< output channel configuration
     int out_channels;                           ///< number of output channels
 ///@}
 
 ///@name Dynamic range
-    float dynamic_range[2];                 ///< dynamic range
-    float drc_scale;                        ///< percentage of dynamic range compression to be applied
+    INTFLOAT dynamic_range[2];                 ///< dynamic range
+    INTFLOAT drc_scale;                        ///< percentage of dynamic range compression to be applied
 ///@}
 
 ///@name Bandwidth
@@ -201,16 +201,16 @@ typedef struct AC3DecodeContext {
     DSPContext dsp;                         ///< for optimization
     AC3DSPContext ac3dsp;
     FmtConvertContext fmt_conv;             ///< optimized conversion functions
-    float mul_bias;                         ///< scaling for float_to_int16 conversion
+    INTFLOAT mul_bias;                         ///< scaling for float_to_int16 conversion
 ///@}
 
 ///@name Aligned arrays
     DECLARE_ALIGNED(16, int,   fixed_coeffs)[AC3_MAX_CHANNELS][AC3_MAX_COEFS];       ///< fixed-point transform coefficients
     DECLARE_ALIGNED(32, float, transform_coeffs)[AC3_MAX_CHANNELS][AC3_MAX_COEFS];   ///< transform coefficients
-    DECLARE_ALIGNED(32, float, delay)[AC3_MAX_CHANNELS][AC3_BLOCK_SIZE];             ///< delay - added to the next block
-    DECLARE_ALIGNED(32, float, window)[AC3_BLOCK_SIZE];                              ///< window coefficients
-    DECLARE_ALIGNED(32, float, tmp_output)[AC3_BLOCK_SIZE];                          ///< temporary storage for output before windowing
-    DECLARE_ALIGNED(32, float, output)[AC3_MAX_CHANNELS][AC3_BLOCK_SIZE];            ///< output after imdct transform and windowing
+    DECLARE_ALIGNED(32, INTFLOAT, delay)[AC3_MAX_CHANNELS][AC3_BLOCK_SIZE];             ///< delay - added to the next block
+    DECLARE_ALIGNED(32, INTFLOAT, window)[AC3_BLOCK_SIZE];                              ///< window coefficients
+    DECLARE_ALIGNED(32, INTFLOAT, tmp_output)[AC3_BLOCK_SIZE];                          ///< temporary storage for output before windowing
+    DECLARE_ALIGNED(32, INTFLOAT, output)[AC3_MAX_CHANNELS][AC3_BLOCK_SIZE];            ///< output after imdct transform and windowing
     DECLARE_ALIGNED(32, uint8_t, input_buffer)[AC3_FRAME_BUFFER_SIZE + FF_INPUT_BUFFER_PADDING_SIZE]; ///< temp buffer to prevent overread
 ///@}
 } AC3DecodeContext;

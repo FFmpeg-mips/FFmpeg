@@ -134,6 +134,8 @@ typedef struct AC3DSPContext {
 
     void (*downmix)(float (*samples)[256], float (*matrix)[2], int out_ch,
                     int in_ch, int len);
+    void (*downmix_fixed)(int (*samples)[256], int (*matrix)[2], int out_ch,
+                    int in_ch, int len);
 } AC3DSPContext;
 
 void ff_ac3dsp_init    (AC3DSPContext *c, int bit_exact);

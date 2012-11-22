@@ -187,7 +187,6 @@ static av_cold int ac3_decode_init(AVCodecContext *avctx)
             avctx->request_channels <= 2) {
         avctx->channels = avctx->request_channels;
     }
-    s->downmixed = 1;
 
     avcodec_get_frame_defaults(&s->frame);
     avctx->coded_frame = &s->frame;
@@ -617,34 +616,6 @@ static inline void do_imdct(AC3DecodeContext *s, int channels)
                                       s->tmp_output, s->window, 128);
             memcpy(s->delay[ch - 1], s->tmp_output + 128, 128 * sizeof(float));
         }
-    }
-}
-
-/**
- * Upmix delay samples from stereo to original channel layout.
- */
-static void ac3_upmix_delay(AC3DecodeContext *s)
-{
-    int channel_data_size = sizeof(s->delay[0]);
-    switch (s->channel_mode) {
-    case AC3_CHMODE_DUALMONO:
-    case AC3_CHMODE_STEREO:
-        /* upmix mono to stereo */
-        memcpy(s->delay[1], s->delay[0], channel_data_size);
-        break;
-    case AC3_CHMODE_2F2R:
-        memset(s->delay[3], 0, channel_data_size);
-    case AC3_CHMODE_2F1R:
-        memset(s->delay[2], 0, channel_data_size);
-        break;
-    case AC3_CHMODE_3F2R:
-        memset(s->delay[4], 0, channel_data_size);
-    case AC3_CHMODE_3F1R:
-        memset(s->delay[3], 0, channel_data_size);
-    case AC3_CHMODE_3F:
-        memcpy(s->delay[2], s->delay[1], channel_data_size);
-        memset(s->delay[1], 0, channel_data_size);
-        break;
     }
 }
 
@@ -1221,40 +1192,17 @@ static int decode_audio_block(AC3DecodeContext *s, int blk)
         ff_eac3_apply_spectral_extension(s);
     }
 
+    do_imdct(s, s->channels);
+
     /* downmix and MDCT. order depends on whether block switching is used for
        any channel in this block. this is because coefficients for the long
        and short transforms cannot be mixed. */
     downmix_output = s->channels != s->out_channels &&
                      !((s->output_mode & AC3_OUTPUT_LFEON) &&
                      s->fbw_channels == s->out_channels);
-    if (different_transforms) {
-        /* the delay samples have already been downmixed, so we upmix the delay
-           samples in order to reconstruct all channels before downmixing. */
-        if (s->downmixed) {
-            s->downmixed = 0;
-            ac3_upmix_delay(s);
-        }
 
-        do_imdct(s, s->channels);
-
-        if (downmix_output) {
-            s->ac3dsp.downmix(s->output, s->downmix_coeffs,
-                              s->out_channels, s->fbw_channels, 256);
-        }
-    } else {
-        if (downmix_output) {
-            s->ac3dsp.downmix(s->transform_coeffs + 1, s->downmix_coeffs,
-                              s->out_channels, s->fbw_channels, 256);
-        }
-
-        if (downmix_output && !s->downmixed) {
-            s->downmixed = 1;
-            s->ac3dsp.downmix(s->delay, s->downmix_coeffs, s->out_channels,
-                              s->fbw_channels, 128);
-        }
-
-        do_imdct(s, s->out_channels);
-    }
+    if (downmix_output)
+        s->ac3dsp.downmix(s->output, s->downmix_coeffs, s->out_channels, s->fbw_channels, 256);
 
     return 0;
 }

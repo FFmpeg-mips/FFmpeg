@@ -83,6 +83,7 @@ OBJS = adler32.o                                                        \
        file.o                                                           \
        file_open.o                                                      \
        float_dsp.o                                                      \
+       fixed_dsp.o                                                      \
        frame.o                                                          \
        hash.o                                                           \
        hmac.o                                                           \

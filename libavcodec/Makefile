@@ -85,12 +85,12 @@ OBJS-$(CONFIG_VP3DSP)                  += vp3dsp.o
 OBJS-$(CONFIG_ZERO12V_DECODER)         += 012v.o
 OBJS-$(CONFIG_A64MULTI_ENCODER)        += a64multienc.o elbg.o
 OBJS-$(CONFIG_A64MULTI5_ENCODER)       += a64multienc.o elbg.o
-OBJS-$(CONFIG_AAC_DECODER)             += aacdec.o aactab.o aacsbr.o aacps.o \
+OBJS-$(CONFIG_AAC_DECODER)             += aacdec.o aactab.o aacsbr.o aacps_float.o \
                                           aacadtsdec.o mpeg4audio.o kbdwin.o \
                                           sbrdsp.o aacpsdsp.o
-OBJS-$(CONFIG_AAC_FIXED_DECODER)       += aacdec_fixed.o aactab.o aacsbr_fixed.o \
+OBJS-$(CONFIG_AAC_FIXED_DECODER)       += aacdec_fixed.o aactab.o aacsbr_fixed.o aacps_fixed.o \
                                           aacadtsdec.o mpeg4audio.o kbdwin.o \
-                                          sbrdsp.o
+                                          sbrdsp.o aacpsdsp.o
 OBJS-$(CONFIG_AAC_ENCODER)             += aacenc.o aaccoder.o    \
                                           aacpsy.o aactab.o      \
                                           psymodel.o iirfilter.o \
@@ -839,6 +839,7 @@ TOOLS = fourcc2pixfmt
 
 HOSTPROGS = aac_tablegen                                                \
             aacps_tablegen                                              \
+            aacps_fixed_tablegen                                        \
             cbrt_tablegen                                               \
             cbrt_fixed_tablegen                                         \
             cos_tablegen                                                \
@@ -866,7 +867,8 @@ else
 $(SUBDIR)%_tablegen$(HOSTEXESUF): HOSTCFLAGS += -DCONFIG_SMALL=0
 endif
 
-GEN_HEADERS = cbrt_tables.h cbrt_fixed_tables.h aacps_tables.h aac_tables.h dv_tables.h     \
+GEN_HEADERS = cbrt_tables.h cbrt_fixed_tables.h aacps_tables.h aacps_fixed_tables.h \
+              aac_tables.h dv_tables.h     \
               sinewin_tables.h sinewin_fixed_tables.h mpegaudio_tables.h motionpixels_tables.h \
               pcm_tables.h qdm2_tables.h
 GEN_HEADERS := $(addprefix $(SUBDIR), $(GEN_HEADERS))
@@ -877,7 +879,8 @@ $(GEN_HEADERS): $(SUBDIR)%_tables.h: $(SUBDIR)%_tablegen$(HOSTEXESUF)
 ifdef CONFIG_HARDCODED_TABLES
 $(SUBDIR)aacdec.o: $(SUBDIR)cbrt_tables.h
 $(SUBDIR)aacdec_fixed.o: $(SUBDIR)cbrt_fixed_tables.h
-$(SUBDIR)aacps.o: $(SUBDIR)aacps_tables.h
+$(SUBDIR)aacps_float.o: $(SUBDIR)aacps_tables.h
+$(SUBDIR)aacps_fixed.o: $(SUBDIR)aacps_fixed_tables.h
 $(SUBDIR)aactab.o: $(SUBDIR)aac_tables.h
 $(SUBDIR)aactab_fixed.o: $(SUBDIR)aac_fixed_tables.h
 $(SUBDIR)dv.o: $(SUBDIR)dv_tables.h

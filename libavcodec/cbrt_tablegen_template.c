@@ -1,7 +1,7 @@
 /*
- * Generate a header file for hardcoded sine windows
+ * Generate a header file for hardcoded AAC cube-root table
  *
- * Copyright (c) 2009 Reimar DÃ¶ffinger <Reimar.Doeffinger@gmx.de>
+ * Copyright (c) 2010 Reimar Döffinger <Reimar.Doeffinger@gmx.de>
  *
  * This file is part of FFmpeg.
  *
@@ -20,5 +20,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#define CONFIG_FIXED 0
-#include "sinewin_tablegen_template.c"
+#include <stdlib.h>
+#define CONFIG_HARDCODED_TABLES 0
+#include "cbrt_tablegen.h"
+#include "tableprint.h"
+
+int main(void)
+{
+    CBRT_RENAME(cbrt_tableinit)();
+
+    write_fileheader();
+
+    WRITE_ARRAY("static const", uint32_t, cbrt_tab);
+
+    return 0;
+}

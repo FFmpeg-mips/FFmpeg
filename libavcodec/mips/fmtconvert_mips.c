@@ -52,6 +52,7 @@
 #include "libavcodec/fmtconvert.h"
 
 #if HAVE_INLINE_ASM
+#if HAVE_MIPSFPU
 #if HAVE_MIPSDSPR1
 static void float_to_int16_mips(int16_t *dst, const float *src, long len)
 {
@@ -328,15 +329,18 @@ static void int32_to_float_fmul_scalar_mips(float *dst, const int *src,
         : "memory"
     );
 }
+#endif /* HAVE_MIPSFPU */
 #endif /* HAVE_INLINE_ASM */
 
 av_cold void ff_fmt_convert_init_mips(FmtConvertContext *c)
 {
 #if HAVE_INLINE_ASM
+#if HAVE_MIPSFPU
 #if HAVE_MIPSDSPR1
     c->float_to_int16_interleave = float_to_int16_interleave_mips;
     c->float_to_int16 = float_to_int16_mips;
 #endif
     c->int32_to_float_fmul_scalar = int32_to_float_fmul_scalar_mips;
+#endif
 #endif
 }

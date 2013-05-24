@@ -2507,6 +2507,17 @@ WRAPPER8_16_SQ(quant_psnr8x8_c, quant_psnr16_c)
 WRAPPER8_16_SQ(rd8x8_c, rd16_c)
 WRAPPER8_16_SQ(bit8x8_c, bit16_c)
 
+int ff_scalarproduct_q31_c(const int *v1, const int *v2, int len)
+{
+    long long p = 0;
+    int i;
+
+    for (i = 0; i < len; i++)
+        p += (long long)v1[i] * v2[i];
+
+    return (int)((p + 0x40000000) >> 31);
+}
+
 static inline uint32_t clipf_c_one(uint32_t a, uint32_t mini,
                    uint32_t maxi, uint32_t maxisign)
 {
@@ -2885,6 +2896,7 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
     c->scalarproduct_and_madd_int16 = scalarproduct_and_madd_int16_c;
     c->apply_window_int16 = apply_window_int16_c;
     c->vector_clip_int32 = vector_clip_int32_c;
+    c->scalarproduct_q31 = ff_scalarproduct_q31_c;
 
     c->shrink[0]= av_image_copy_plane;
     c->shrink[1]= ff_shrink22;

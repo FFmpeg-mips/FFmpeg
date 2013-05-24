@@ -1,8 +1,4 @@
 /*
- * Generate a header file for hardcoded sine windows
- *
- * Copyright (c) 2009 Reimar Döffinger <Reimar.Doeffinger@gmx.de>
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -20,5 +16,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#define CONFIG_FIXED 0
-#include "sinewin_tablegen_template.c"
+#define CONFIG_FIXED 1
+#include "sinewin.h"
+#include "sinewin_tablegen.h"

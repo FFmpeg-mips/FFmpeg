@@ -26,7 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Author:  Nedeljko Babic (nbabic@mips.com)
+ * Author:  Nedeljko Babic (nedeljko.babic imgtec com)
  *
  * This file is part of FFmpeg.
  *
@@ -46,6 +46,28 @@
  */
 
 #include "fixed_dsp.h"
+
+static void vector_fmul_add_fixed_c(int *dst, const int *src0, const int *src1, const int *src2, int len){
+    int i;
+    int64_t accu;
+
+    for (i=0; i<len; i++) {
+        accu = (int64_t)src0[i] * src1[i];
+        dst[i] = src2[i] + (int)((accu + 0x40000000) >> 31);
+    }
+}
+
+static void vector_fmul_reverse_fixed_c(int *dst, const int *src0, const int *src1, int len)
+{
+    int i;
+    int64_t accu;
+
+    src1 += len-1;
+    for (i=0; i<len; i++) {
+        accu = (int64_t)src0[i] * src1[-i];
+        dst[i] = (int)((accu+0x40000000) >> 31);
+    }
+}
 
 static void vector_fmul_window_fixed_scaled_c(int16_t *dst, const int32_t *src0,
                                        const int32_t *src1, const int32_t *win,
@@ -88,8 +110,47 @@ static void vector_fmul_window_fixed_c(int32_t *dst, const int32_t *src0,
     }
 }
 
+static void vector_fmul_fixed_c(int *dst, const int *src0, const int *src1, int len)
+{
+    int i;
+    int64_t accu;
+
+    for (i = 0; i < len; i++){
+        accu = (int64_t)src0[i] * src1[i];
+        dst[i] = (int)((accu+0x40000000) >> 31);
+    }
+}
+
+static int ff_scalarproduct_fixed_c(const int *v1, const int *v2, int len)
+{
+    int64_t p = 0;
+    int i;
+
+    for (i = 0; i < len; i++)
+        p += (int64_t)v1[i] * v2[i];
+
+    return (int)((p + 0x40000000) >> 31);
+}
+
+static void butterflies_fixed_c(int *v1, int *v2, int len)
+{
+  int i;
+
+  for (i = 0; i < len; i++){
+    int t = v1[i] - v2[i];
+    v1[i] += v2[i];
+    v2[i] = t;
+  }
+}
+
 void avpriv_fixed_dsp_init(AVFixedDSPContext *fdsp, int bit_exact)
 {
+    fdsp->vector_fmul_fixed = vector_fmul_fixed_c;
+    fdsp->vector_fmul_add_fixed = vector_fmul_add_fixed_c;
+    fdsp->vector_fmul_reverse_fixed = vector_fmul_reverse_fixed_c;
     fdsp->vector_fmul_window_fixed_scaled = vector_fmul_window_fixed_scaled_c;
     fdsp->vector_fmul_window_fixed = vector_fmul_window_fixed_c;
+    fdsp->vector_fmul_fixed = vector_fmul_fixed_c;
+    fdsp->butterflies_fixed = butterflies_fixed_c;
+    fdsp->scalarproduct_fixed = ff_scalarproduct_fixed_c;
 }

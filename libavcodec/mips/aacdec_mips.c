@@ -484,7 +484,6 @@ static void apply_ltp_mips(AACContext *ac, SingleChannelElement *sce)
     }
 }
 
-#if HAVE_MIPSFPU
 static void update_ltp_mips(AACContext *ac, SingleChannelElement *sce)
 {
     IndividualChannelStream *ics = &sce->ics;
@@ -816,16 +815,13 @@ static void update_ltp_mips(AACContext *ac, SingleChannelElement *sce)
         );
     }
 }
-#endif /* HAVE_MIPSFPU */
-#endif /* HAVE_INLINE_ASM */
+#endif /* HAVE_INLINE_ASM*/
 
 void ff_aacdec_init_mips(AACContext *c)
 {
 #if HAVE_INLINE_ASM
     c->imdct_and_windowing         = imdct_and_windowing_mips;
     c->apply_ltp                   = apply_ltp_mips;
-#if HAVE_MIPSFPU
     c->update_ltp                  = update_ltp_mips;
-#endif /* HAVE_MIPSFPU */
 #endif /* HAVE_INLINE_ASM */
 }

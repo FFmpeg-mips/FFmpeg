@@ -26,13 +26,26 @@
 #include <stdint.h>
 #include <math.h>
 
+#if CONFIG_FIXED
+#define CBRT_RENAME(a) a ## _fixed
+#define CBRT(x) (int)floor((x).f * 8192 + 0.5)
+#else
+#define CBRT_RENAME(a) a
+#define CBRT(x) x.i
+#endif
+
 #if CONFIG_HARDCODED_TABLES
+#if CONFIG_FIXED
+#define cbrt_tableinit_fixed()
+#include "libavcodec/cbrt_fixed_tables.h"
+#else
 #define cbrt_tableinit()
 #include "libavcodec/cbrt_tables.h"
+#endif
 #else
 static uint32_t cbrt_tab[1 << 13];
 
-static void cbrt_tableinit(void)
+static void CBRT_RENAME(cbrt_tableinit)(void)
 {
     if (!cbrt_tab[(1<<13) - 1]) {
         int i;
@@ -42,7 +55,7 @@ static void cbrt_tableinit(void)
                 uint32_t i;
             } f;
             f.f = cbrtf(i) * i;
-            cbrt_tab[i] = f.i;
+            cbrt_tab[i] = CBRT(f);
         }
     }
 }

@@ -21,7 +21,9 @@ OBJS = allcodecs.o                                                      \
        bitstream_filter.o                                               \
        codec_desc.o                                                     \
        fmtconvert.o                                                     \
+       float_emu_tab.o                                                  \
        imgconvert.o                                                     \
+       log2_tab.o                                                       \
        mathtables.o                                                     \
        options.o                                                        \
        parser.o                                                         \
@@ -73,7 +75,7 @@ OBJS-$(CONFIG_RANGECODER)              += rangecoder.o
 RDFT-OBJS-$(CONFIG_HARDCODED_TABLES)   += sin_tables.o
 OBJS-$(CONFIG_RDFT)                    += rdft.o $(RDFT-OBJS-yes)
 OBJS-$(CONFIG_SHARED)                  += log2_tab.o
-OBJS-$(CONFIG_SINEWIN)                 += sinewin.o
+OBJS-$(CONFIG_SINEWIN)                 += sinewin.o sinewin_fixed.o
 OBJS-$(CONFIG_VAAPI)                   += vaapi.o
 OBJS-$(CONFIG_VDPAU)                   += vdpau.o
 OBJS-$(CONFIG_VIDEODSP)                += videodsp.o
@@ -86,6 +88,8 @@ OBJS-$(CONFIG_A64MULTI5_ENCODER)       += a64multienc.o elbg.o
 OBJS-$(CONFIG_AAC_DECODER)             += aacdec.o aactab.o aacsbr.o aacps.o \
                                           aacadtsdec.o mpeg4audio.o kbdwin.o \
                                           sbrdsp.o aacpsdsp.o
+OBJS-$(CONFIG_AAC_FIXED_DECODER)       += aacdec_fixed.o aactab.o \
+                                          aacadtsdec.o mpeg4audio.o kbdwin.o
 OBJS-$(CONFIG_AAC_ENCODER)             += aacenc.o aaccoder.o    \
                                           aacpsy.o aactab.o      \
                                           psymodel.o iirfilter.o \
@@ -835,6 +839,7 @@ TOOLS = fourcc2pixfmt
 HOSTPROGS = aac_tablegen                                                \
             aacps_tablegen                                              \
             cbrt_tablegen                                               \
+            cbrt_fixed_tablegen                                         \
             cos_tablegen                                                \
             dv_tablegen                                                 \
             motionpixels_tablegen                                       \
@@ -842,6 +847,7 @@ HOSTPROGS = aac_tablegen                                                \
             pcm_tablegen                                                \
             qdm2_tablegen                                               \
             sinewin_tablegen                                            \
+            sinewin_fixed_tablegen                                      \
 
 CLEANFILES = *_tables.c *_tables.h *_tablegen$(HOSTEXESUF)
 
@@ -859,8 +865,8 @@ else
 $(SUBDIR)%_tablegen$(HOSTEXESUF): HOSTCFLAGS += -DCONFIG_SMALL=0
 endif
 
-GEN_HEADERS = cbrt_tables.h aacps_tables.h aac_tables.h dv_tables.h     \
-              sinewin_tables.h mpegaudio_tables.h motionpixels_tables.h \
+GEN_HEADERS = cbrt_tables.h cbrt_fixed_tables.h aacps_tables.h aac_tables.h dv_tables.h     \
+              sinewin_tables.h sinewin_fixed_tables.h mpegaudio_tables.h motionpixels_tables.h \
               pcm_tables.h qdm2_tables.h
 GEN_HEADERS := $(addprefix $(SUBDIR), $(GEN_HEADERS))
 
@@ -869,10 +875,13 @@ $(GEN_HEADERS): $(SUBDIR)%_tables.h: $(SUBDIR)%_tablegen$(HOSTEXESUF)
 
 ifdef CONFIG_HARDCODED_TABLES
 $(SUBDIR)aacdec.o: $(SUBDIR)cbrt_tables.h
+$(SUBDIR)aacdec_fixed.o: $(SUBDIR)cbrt_fixed_tables.h
 $(SUBDIR)aacps.o: $(SUBDIR)aacps_tables.h
 $(SUBDIR)aactab.o: $(SUBDIR)aac_tables.h
+$(SUBDIR)aactab_fixed.o: $(SUBDIR)aac_fixed_tables.h
 $(SUBDIR)dv.o: $(SUBDIR)dv_tables.h
 $(SUBDIR)sinewin.o: $(SUBDIR)sinewin_tables.h
+$(SUBDIR)sinewin_fixed.o: $(SUBDIR)sinewin_fixed_tables.h
 $(SUBDIR)mpegaudiodec.o: $(SUBDIR)mpegaudio_tables.h
 $(SUBDIR)mpegaudiodec_float.o: $(SUBDIR)mpegaudio_tables.h
 $(SUBDIR)motionpixels.o: $(SUBDIR)motionpixels_tables.h

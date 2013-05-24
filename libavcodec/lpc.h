@@ -194,4 +194,52 @@ static inline int compute_lpc_coefs(const LPC_TYPE *autoc, int max_order,
     return 0;
 }
 
+static inline int compute_lpc_coefs_fixed(const int *autoc, int max_order, int *lpc,
+                                           int lpc_stride, int fail, int normalize)
+{
+    int i, j;
+    int *lpc_last = lpc;
+    int err;
+    long long accu;
+
+    av_assert2(normalize || !fail);
+
+    if (normalize)
+        err = *autoc++;
+
+    if (fail && (autoc[max_order - 1] == 0 || err <= 0))
+        return -1;
+
+    for(i=0; i<max_order; i++) {
+        int r = (-autoc[i] + 16) >> 5;
+
+        if (normalize) {
+            for(j=0; j<i; j++)
+                r -= lpc_last[j] * autoc[i-j-1];
+
+            r /= err;
+            err *= 1 - (r * r);
+        }
+
+        lpc[i] = r;
+
+        for (j=0; j < (i+1)>>1; j++) {
+            int f = lpc_last[    j];
+            int b = lpc_last[i-1-j];
+
+            accu = (long long)r * b;
+            lpc[    j] = f + (int)((accu + 0x2000000) >> 26);
+            accu = (long long)r * f;
+            lpc[i-1-j] = b + (int)((accu + 0x2000000) >> 26);
+        }
+
+        if (fail && err < 0)
+            return -1;
+
+        lpc_last = lpc;
+        lpc += lpc_stride;
+    }
+    return 0;
+}
+
 #endif /* AVCODEC_LPC_H */

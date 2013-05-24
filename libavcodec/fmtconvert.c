@@ -68,6 +68,22 @@ static void float_to_int16_interleave_c(int16_t *dst, const float **src,
     }
 }
 
+static void int_to_int16_interleave_c(int16_t *dst, const int **src, long len, int channels)
+{
+    int i, j, c;
+
+    if (channels==2){
+        for (i=0; i<len; i++){
+            dst[2*i]   = av_clip_int16((*(src[0]+i) + 256) >> 9);
+        dst[2*i+1] = av_clip_int16((*(src[1]+i) + 256) >> 9);
+        }
+    }else{
+    for (c=0; c<channels; c++)
+        for (i=0, j=c; i<len; i++, j+=channels)
+            dst[j] = av_clip_int16((*(src[c]+i) + 256) >> 9);
+    }
+}
+
 void ff_float_interleave_c(float *dst, const float **src, unsigned int len,
                            int channels)
 {
@@ -93,12 +109,13 @@ av_cold void ff_fmt_convert_init(FmtConvertContext *c, AVCodecContext *avctx)
     c->int32_to_float_fmul_array8 = int32_to_float_fmul_array8_c;
     c->float_to_int16             = float_to_int16_c;
     c->float_to_int16_interleave  = float_to_int16_interleave_c;
+    c->int_to_int16_interleave    = int_to_int16_interleave_c;
     c->float_interleave           = ff_float_interleave_c;
 
     if (ARCH_ARM) ff_fmt_convert_init_arm(c, avctx);
     if (ARCH_PPC) ff_fmt_convert_init_ppc(c, avctx);
     if (ARCH_X86) ff_fmt_convert_init_x86(c, avctx);
-    if (HAVE_MIPSFPU) ff_fmt_convert_init_mips(c);
+    if (ARCH_MIPS) ff_fmt_convert_init_mips(c);
 }
 
 /* ffdshow custom code */

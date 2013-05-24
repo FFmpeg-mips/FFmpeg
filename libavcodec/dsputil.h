@@ -208,6 +208,13 @@ typedef struct DSPContext {
     void (*h263_v_loop_filter)(uint8_t *src, int stride, int qscale);
     void (*h263_h_loop_filter)(uint8_t *src, int stride, int qscale);
 
+    /**
+     * Calculate the scalar product of two vectors of floats.
+     * @param v1  first vector, 16-byte aligned
+     * @param v2  second vector, 16-byte aligned
+     * @param len length of vectors, multiple of 4
+     */
+    int (*scalarproduct_q31)(const int *v1, const int *v2, int len);
     /* assume len is a multiple of 8, and arrays are 16-byte aligned */
     void (*vector_clipf)(float *dst /* align 16 */, const float *src /* align 16 */, float min, float max, int len /* align 16 */);
 
@@ -317,6 +324,16 @@ attribute_deprecated void dsputil_init(DSPContext* c, AVCodecContext *avctx);
 
 int ff_check_alignment(void);
 
+/**
+ * Return the scalar product of two vectors.
+ *
+ * @param v1  first input vector
+ * @param v2  first input vector
+ * @param len number of elements
+ *
+ * @return sum of elementwise products
+ */
+int ff_scalarproduct_q31_c(const int *v1, const int *v2, int len);
 void ff_set_cmp(DSPContext* c, me_cmp_func *cmp, int type);
 
 void ff_dsputil_init_alpha(DSPContext* c, AVCodecContext *avctx);

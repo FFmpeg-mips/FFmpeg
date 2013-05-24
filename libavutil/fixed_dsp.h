@@ -53,6 +53,25 @@
 #include "common.h"
 
 typedef struct AVFixedDSPContext {
+    /* assume len is a multiple of 16, and arrays are 32-byte aligned */
+
+    /**
+     * Calculate the product of two vectors of integers and store the result in
+     * a vector of integers.
+     *
+     * @param dst  output vector
+     *             constraints: 32-byte aligned
+     * @param src0 first input vector
+     *             constraints: 32-byte aligned
+     * @param src1 second input vector
+     *             constraints: 32-byte aligned
+     * @param len  number of elements in the input
+     *             constraints: multiple of 16
+     */
+    void (*vector_fmul_fixed)(int *dst, const int *src0, const int *src1,
+                        int len);
+
+    void (*vector_fmul_reverse_fixed)(int *dst, const int *src0, const int *src1, int len);
     /**
      * Overlap/add with window function.
      * Used primarily by MDCT-based audio codecs.
@@ -91,6 +110,40 @@ typedef struct AVFixedDSPContext {
      */
     void (*vector_fmul_window_fixed)(int32_t *dst, const int32_t *src0, const int32_t *src1, const int32_t *win, int len);
 
+    /**
+     * Calculate the product of two vectors of integers, add a third vector of
+     * integers and store the result in a vector of integers.
+     *
+     * @param dst  output vector
+     *             constraints: 32-byte aligned
+     * @param src0 first input vector
+     *             constraints: 32-byte aligned
+     * @param src1 second input vector
+     *             constraints: 32-byte aligned
+     * @param src1 third input vector
+     *             constraints: 32-byte aligned
+     * @param len  number of elements in the input
+     *             constraints: multiple of 16
+     */
+    void (*vector_fmul_add_fixed)(int *dst, const int *src0, const int *src1,
+                            const int *src2, int len);
+
+    /**
+     * Calculate the scalar product of two vectors of floats.
+     * @param v1  first vector, 16-byte aligned
+     * @param v2  second vector, 16-byte aligned
+     * @param len length of vectors, multiple of 4
+     */
+    int (*scalarproduct_fixed)(const int *v1, const int *v2, int len);
+
+    /**
+     * Calculate the sum and difference of two vectors of integers.
+     *
+     * @param v1  first input vector, sum output, 16-byte aligned
+     * @param v2  second input vector, difference output, 16-byte aligned
+     * @param len length of vectors, multiple of 4
+     */
+    void (*butterflies_fixed)(int *av_restrict v1, int *av_restrict v2, int len);
 } AVFixedDSPContext;
 
 /**

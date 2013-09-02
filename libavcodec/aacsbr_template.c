@@ -314,7 +314,7 @@ static int sbr_make_f_master(AACContext *ac, SpectralBandReplication *sbr,
           tmp <<= 1;
           nz++;
         }
-        tmp = fixed_log(tmp - 0x80000000);
+        tmp = fixed_log(tmp - (int)0x80000000);
         tmp = (int)(((int64_t)tmp * CONST_RECIP_LN2 + 0x20000000) >> 30);
         tmp = (((tmp + 128) >> 8) + ((8 - nz) << 23)) * half_bands;
         num_bands_0 = ((tmp + 0x400000) >> 23) * 2;
@@ -354,7 +354,7 @@ static int sbr_make_f_master(AACContext *ac, SpectralBandReplication *sbr,
               tmp <<= 1;
               nz++;
             }
-            tmp = fixed_log(tmp - 0x80000000);
+            tmp = fixed_log(tmp - (int)0x80000000);
             tmp = (int)(((int64_t)tmp * CONST_RECIP_LN2 + 0x20000000) >> 30);
             tmp = (((tmp + 128) >> 8) + ((8 - nz) << 23)) * half_bands;
             if (spectrum->bs_alter_scale)
@@ -496,7 +496,7 @@ static int sbr_make_f_derived(AACContext *ac, SpectralBandReplication *sbr)
         temp <<= 1;
         nz++;
     }
-    temp = fixed_log(temp - 0x80000000);
+    temp = fixed_log(temp - (int)0x80000000);
     temp = (int)(((int64_t)temp * CONST_RECIP_LN2 + 0x20000000) >> 30);
     temp = (((temp + 128) >> 8) + ((8 - nz) << 23)) * sbr->spectrum_params.bs_noise_bands;
 

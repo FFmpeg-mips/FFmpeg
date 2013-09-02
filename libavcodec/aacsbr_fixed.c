@@ -91,12 +91,12 @@ static int fixed_log(int x)
     ret = x;
     xpow = x;
     for (i=0; i<10; i+=2){
-        xpow = (int)(((int64_t)xpow * x + 0x4000000) >> 31);
-        tmp = (int)(((int64_t)xpow * fixed_log_table[i] + 0x4000000) >> 31);
+        xpow = (int)(((int64_t)xpow * x + 0x40000000) >> 31);
+        tmp = (int)(((int64_t)xpow * fixed_log_table[i] + 0x40000000) >> 31);
         ret -= tmp;
 
-        xpow = (int)(((int64_t)xpow * x + 0x4000000) >> 31);
-        tmp = (int)(((int64_t)xpow * fixed_log_table[i+1] + 0x4000000) >> 31);
+        xpow = (int)(((int64_t)xpow * x + 0x40000000) >> 31);
+        tmp = (int)(((int64_t)xpow * fixed_log_table[i+1] + 0x40000000) >> 31);
         ret += tmp;
     }
 
@@ -117,9 +117,9 @@ static int fixed_exp(int x)
     xpow = x;
     for (i=0; i<7; i++){
         accu = (int64_t)xpow * x;
-        xpow = (int)((accu + 0x40000) >> 23);
+        xpow = (int)((accu + 0x400000) >> 23);
         accu = (int64_t)xpow * fixed_exp_table[i];
-        tmp = (int)((accu + 0x4000000) >> 31);
+        tmp = (int)((accu + 0x40000000) >> 31);
         ret += tmp;
     }
 
@@ -137,7 +137,7 @@ static void make_bands(int16_t* bands, int start, int stop, int num_bands)
         base <<= 1;
         nz++;
     }
-    base = fixed_log(base - 0x80000000);
+    base = fixed_log(base - (int)0x80000000);
     base = (((base+128)>>8) + (8-nz)*CONST_LN2) / num_bands;
     base = fixed_exp(base);
 

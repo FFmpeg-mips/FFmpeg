@@ -26,9 +26,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Authors:  Darko Laus      (darko@mips.com)
- *           Djordje Pesut   (djordje@mips.com)
- *           Mirjana Vulin   (mvulin@mips.com)
+ * Authors:  Darko Laus      (darko.laus imgtec com)
+ *           Djordje Pesut   (djordje.pesut imgtec com)
+ *           Mirjana Vulin   (mirjana.vulin imgtec com)
  *
  * AAC Spectral Band Replication decoding functions optimized for MIPS
  *
@@ -915,26 +915,919 @@ static void sbr_hf_apply_noise_3_mips(float (*Y)[2], const float *s_m,
     }
 }
 #endif /* HAVE_MIPSFPU */
+
+#if HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2
+static av_always_inline void autocorrelate_q31_0(const int x[40][2], aac_float_t phi[3][2][2])
+{
+    int mant, expo, mant1, expo1;
+    unsigned int real_sum_hi, real_sum_lo;
+
+    int x1, x2, x3, x4;
+    int *x_ptr, *x_end;
+
+    __asm__ volatile (
+        ".set       push                                    \n\t"
+        ".set       noreorder                               \n\t"
+        "addiu      %[x_ptr],       %[x],           16      \n\t"   // x_ptr = &x[2][0]
+        "addiu      %[x_end],       %[x],           304     \n\t"   // x_end = &x[38][0]
+        "lw         %[x1],          8(%[x])                 \n\t"
+        "lw         %[x2],          12(%[x])                \n\t"
+        "lw         %[x3],          16(%[x])                \n\t"
+        "lw         %[x4],          20(%[x])                \n\t"
+        "mult       %[x1],          %[x1]                   \n\t"
+        "madd       %[x2],          %[x2]                   \n\t"
+        /* loop unrolled 4 times */
+        "1:                                                 \n\t"   // for (i = 2; i < 38; i++)
+        "lw         %[x1],          8(%[x_ptr])             \n\t"
+        "lw         %[x2],          12(%[x_ptr])            \n\t"
+        "madd       %[x3],          %[x3]                   \n\t"
+        "madd       %[x4],          %[x4]                   \n\t"
+        "madd       %[x1],          %[x1]                   \n\t"
+        "madd       %[x2],          %[x2]                   \n\t"
+        "lw         %[x3],          16(%[x_ptr])            \n\t"
+        "lw         %[x4],          20(%[x_ptr])            \n\t"
+        "lw         %[x1],          24(%[x_ptr])            \n\t"
+        "lw         %[x2],          28(%[x_ptr])            \n\t"
+        "madd       %[x3],          %[x3]                   \n\t"
+        "madd       %[x4],          %[x4]                   \n\t"
+        "madd       %[x1],          %[x1]                   \n\t"
+        "madd       %[x2],          %[x2]                   \n\t"
+        "addiu      %[x_ptr],       32                      \n\t"
+        "lw         %[x3],          0(%[x_ptr])             \n\t"
+        "bne        %[x_ptr],       %[x_end],       1b      \n\t"
+        " lw        %[x4],          4(%[x_ptr])             \n\t"
+        "mfhi       %[real_sum_hi]                          \n\t"
+        "mflo       %[real_sum_lo]                          \n\t"
+        "madd       %[x3],          %[x3]                   \n\t"   // accu_re += (int64_t)x[38][0] * x[38][0];
+        "madd       %[x4],          %[x4]                   \n\t"   // accu_re += (int64_t)x[38][1] * x[38][1];
+        "lw         %[x1],          0(%[x])                 \n\t"
+        "lw         %[x2],          4(%[x])                 \n\t"
+        "mfhi       %[mant]                                 \n\t"   // accu_re >> 32
+        "mthi       %[real_sum_hi], $ac1                    \n\t"
+        "mtlo       %[real_sum_lo], $ac1                    \n\t"
+        "madd       $ac1,           %[x1],          %[x1]   \n\t"   // accu_re += (int64_t)x[0][0] * x[0][0];
+        "madd       $ac1,           %[x2],          %[x2]   \n\t"   // accu_re += (int64_t)x[0][1] * x[0][1];
+        "absq_s.w   %[mant],        %[mant]                 \n\t"
+        "mfhi       %[mant1],       $ac1                    \n\t"
+        "li         %[x1],          33                      \n\t"
+        "clz        %[expo],        %[mant]                 \n\t"
+        "subu       %[expo],        %[x1],          %[expo] \n\t"
+        "extrv_r.w  %[mant],        $ac0,           %[expo] \n\t"   // mant = (int)((accu_re+round) >> nz)
+        "absq_s.w   %[mant1],       %[mant1]                \n\t"
+        "clz        %[expo1],       %[mant1]                \n\t"
+        "subu       %[expo1],       %[x1],          %[expo1]\n\t"
+        "extrv_r.w  %[mant1],       $ac1,           %[expo1]\n\t"   // mant = (int)((accu_re+round) >> nz)
+        "shra_r.w   %[mant],        %[mant],        7       \n\t"
+        "sll        %[mant],        6                       \n\t"
+        "addiu      %[expo],        15                      \n\t"
+        "shra_r.w   %[mant1],       %[mant1],       7       \n\t"
+        "sll        %[mant1],       6                       \n\t"
+        "addiu      %[expo1],       15                      \n\t"
+        ".set   pop                                         \n\t"
+        :[x_ptr]"=&r"(x_ptr), [x_end]"=&r"(x_end),
+         [x1]"=&r"(x1), [x2]"=&r"(x2), [x3]"=&r"(x3), [x4]"=&r"(x4),
+         [real_sum_lo]"=&r"(real_sum_lo), [real_sum_hi]"=&r"(real_sum_hi),
+         [mant]"=&r"(mant), [expo]"=&r"(expo), [mant1]"=&r"(mant1), [expo1]"=&r"(expo1)
+        :[x]"r"(x), [phi]"r"(phi)
+        :"memory", "hi", "lo", "$ac1hi", "$ac1lo"
+    );
+
+    phi[1][0][0] = int2float(mant, expo);
+    phi[2][1][0] = int2float(mant1, expo1);
+
+}
+
+static av_always_inline void autocorrelate_q31_12(const int x[40][2], aac_float_t phi[3][2][2])
+{
+    int mant, expo, mant1, expo1;
+    int x1, x2, x3, x4, x5, x6, x7, x8;
+    int *x_ptr, *x_end;
+    int real_sum_hi, real_sum_lo, imag_sum_hi, imag_sum_lo, real_sum_hi2, real_sum_lo2, imag_sum_hi2, imag_sum_lo2;
+
+    __asm__ volatile (
+        /* Instructions are scheduled to minimize pipeline stall.
+           Symbolic register names reused for different values to
+           minimized number of used registers. */
+        ".set       push                                            \n\t"
+        ".set       noreorder                                       \n\t"
+
+        "addiu      %[x_ptr],       %[x],           16              \n\t"   // x_ptr = &x[2][0]
+        "addiu      %[x_end],       %[x],           304             \n\t"   // x_end = &x[38][0]
+        "lw         %[x7],          0(%[x])                         \n\t"   // x[0][0]
+        "lw         %[x8],          4(%[x])                         \n\t"   // x[0][1]
+        "lw         %[x5],          8(%[x])                         \n\t"
+        "lw         %[x6],          12(%[x])                        \n\t"
+        "lw         %[x1],          16(%[x])                        \n\t"
+        "lw         %[x2],          20(%[x])                        \n\t"
+        "lw         %[x3],          24(%[x])                        \n\t"
+        "lw         %[x4],          28(%[x])                        \n\t"
+        "mult       $ac0,           %[x5],          %[x1]           \n\t"   // $ac0 = accu_re1
+        "madd       $ac0,           %[x6],          %[x2]           \n\t"
+        "mult       $ac1,           %[x5],          %[x2]           \n\t"   // $ac1 = accu_im1
+        "msub       $ac1,           %[x6],          %[x1]           \n\t"
+        "mult       $ac2,           %[x5],          %[x3]           \n\t"   // $ac2 = accu_re2
+        "madd       $ac2,           %[x6],          %[x4]           \n\t"
+        "mult       $ac3,           %[x5],          %[x4]           \n\t"   // $ac3 = accu_im2
+        "msub       $ac3,           %[x6],          %[x3]           \n\t"
+
+        "madd       $ac2,           %[x7],          %[x1]           \n\t"   // accu_re2 += (int64_t)x[ 0][0] * x[2][0];
+        "madd       $ac2,           %[x8],          %[x2]           \n\t"
+        "madd       $ac3,           %[x7],          %[x2]           \n\t"   // accu_im2 += (int64_t)x[ 0][0] * x[2][1];
+        "msub       $ac3,           %[x8],          %[x1]           \n\t"
+
+        /* loop unrolled 4 times */
+        "1:                                                         \n\t"   // for (i = 2; i < 38; i++)
+        "lw         %[x5],          16(%[x_ptr])                    \n\t"
+        "lw         %[x6],          20(%[x_ptr])                    \n\t"
+        "madd       $ac0,           %[x1],          %[x3]           \n\t"
+        "madd       $ac0,           %[x2],          %[x4]           \n\t"
+        "madd       $ac1,           %[x1],          %[x4]           \n\t"
+        "msub       $ac1,           %[x2],          %[x3]           \n\t"
+        "madd       $ac2,           %[x1],          %[x5]           \n\t"
+        "madd       $ac2,           %[x2],          %[x6]           \n\t"
+        "madd       $ac3,           %[x1],          %[x6]           \n\t"
+        "msub       $ac3,           %[x2],          %[x5]           \n\t"
+        "lw         %[x7],          24(%[x_ptr])                    \n\t"
+        "lw         %[x8],          28(%[x_ptr])                    \n\t"
+        "madd       $ac0,           %[x3],          %[x5]           \n\t"
+        "madd       $ac0,           %[x4],          %[x6]           \n\t"
+        "madd       $ac1,           %[x3],          %[x6]           \n\t"
+        "msub       $ac1,           %[x4],          %[x5]           \n\t"
+        "madd       $ac2,           %[x3],          %[x7]           \n\t"
+        "madd       $ac2,           %[x4],          %[x8]           \n\t"
+        "madd       $ac3,           %[x3],          %[x8]           \n\t"
+        "msub       $ac3,           %[x4],          %[x7]           \n\t"
+        "lw         %[x1],          32(%[x_ptr])                    \n\t"
+        "lw         %[x2],          36(%[x_ptr])                    \n\t"
+        "madd       $ac0,           %[x5],          %[x7]           \n\t"
+        "madd       $ac0,           %[x6],          %[x8]           \n\t"
+        "madd       $ac1,           %[x5],          %[x8]           \n\t"
+        "msub       $ac1,           %[x6],          %[x7]           \n\t"
+        "madd       $ac2,           %[x5],          %[x1]           \n\t"
+        "madd       $ac2,           %[x6],          %[x2]           \n\t"
+        "madd       $ac3,           %[x5],          %[x2]           \n\t"
+        "msub       $ac3,           %[x6],          %[x1]           \n\t"
+        "lw         %[x3],          40(%[x_ptr])                    \n\t"
+        "lw         %[x4],          44(%[x_ptr])                    \n\t"
+        "addiu      %[x_ptr],       32                              \n\t"
+        "madd       $ac0,           %[x7],          %[x1]           \n\t"
+        "madd       $ac0,           %[x8],          %[x2]           \n\t"
+        "madd       $ac1,           %[x7],          %[x2]           \n\t"
+        "msub       $ac1,           %[x8],          %[x1]           \n\t"
+        "madd       $ac2,           %[x7],          %[x3]           \n\t"
+        "madd       $ac2,           %[x8],          %[x4]           \n\t"
+        "madd       $ac3,           %[x7],          %[x4]           \n\t"
+        "bne        %[x_ptr],       %[x_end],       1b              \n\t"
+        " msub      $ac3,           %[x8],          %[x3]           \n\t"
+
+        "mflo       %[real_sum_lo], $ac0                            \n\t"
+        "mfhi       %[real_sum_hi], $ac0                            \n\t"
+        "mflo       %[imag_sum_lo], $ac1                            \n\t"
+        "mfhi       %[imag_sum_hi], $ac1                            \n\t"
+        "madd       $ac0,           %[x1],          %[x3]           \n\t"   // accu_re1 += (int64_t)x[38][0] * x[39][0];
+        "madd       $ac0,           %[x2],          %[x4]           \n\t"   // accu_re1 += (int64_t)x[38][1] * x[39][1];
+        "madd       $ac1,           %[x1],          %[x4]           \n\t"   // accu_im1 += (int64_t)x[38][0] * x[39][1];
+        "msub       $ac1,           %[x2],          %[x3]           \n\t"   // accu_im1 -= (int64_t)x[38][1] * x[39][0];
+        "mfhi       %[real_sum_hi2],$ac2                            \n\t"
+        "mfhi       %[imag_sum_hi2],$ac3                            \n\t"
+        "lw         %[x2],          0(%[x])                         \n\t"   // x[0][0]
+        "lw         %[x3],          4(%[x])                         \n\t"   // x[0][1]
+        "mfhi       %[mant],        $ac0                            \n\t"
+        "lw         %[x4],          8(%[x])                         \n\t"   // x[1][0]
+        "mfhi       %[mant1],       $ac1                            \n\t"
+        "lw         %[x5],          12(%[x])                        \n\t"   // x[1][1]
+        "absq_s.w   %[mant],        %[mant]                         \n\t"
+        "li         %[x1],          33                              \n\t"
+        "absq_s.w   %[mant1],       %[mant1]                        \n\t"
+        "clz        %[expo],        %[mant]                         \n\t"
+        "subu       %[expo],        %[x1],          %[expo]         \n\t"
+        "clz        %[expo1],       %[mant1]                        \n\t"
+        "extrv_r.w  %[mant],        $ac0,           %[expo]         \n\t"   // mant = (int)((accu_re1+round) >> nz)
+        "subu       %[expo1],       %[x1],          %[expo1]        \n\t"
+        "mtlo       %[real_sum_lo], $ac0                            \n\t"
+        "extrv_r.w  %[mant1],       $ac1,           %[expo1]        \n\t"   // mant = (int)((accu_im1+round) >> nz)
+        "mthi       %[real_sum_hi], $ac0                            \n\t"
+        "mtlo       %[imag_sum_lo], $ac1                            \n\t"
+        "mthi       %[imag_sum_hi], $ac1                            \n\t"
+        "shra_r.w   %[mant],        %[mant],        7               \n\t"
+        "absq_s.w   %[real_sum_hi2],%[real_sum_hi2]                 \n\t"   // real_sum_hi is used as mant
+        "sll        %[mant],        6                               \n\t"
+        "addiu      %[expo],        15                              \n\t"
+        "shra_r.w   %[mant1],       %[mant1],       7               \n\t"
+        "absq_s.w   %[imag_sum_hi2],%[imag_sum_hi2]                 \n\t"   // imag_sum_hi is used as mant
+        "sll        %[mant1],       6                               \n\t"
+        "addiu      %[expo1],       15                              \n\t"
+        "madd       $ac0,           %[x2],          %[x4]           \n\t"   // accu_re1 += (long long)x[ 0][0] * x[1][0];
+        "madd       $ac0,           %[x3],          %[x5]           \n\t"
+        "madd       $ac1,           %[x2],          %[x5]           \n\t"   // accu_im1 += (long long)x[ 0][0] * x[1][1];
+        "msub       $ac1,           %[x3],          %[x4]           \n\t"
+        "clz        %[real_sum_lo2],%[real_sum_hi2]                 \n\t"   // real_sum_lo is used as expo
+        "clz        %[imag_sum_lo2],%[imag_sum_hi2]                 \n\t"   // imag_sum_lo is used as expo
+        "mflo       %[real_sum_lo], $ac0                            \n\t"
+        "mfhi       %[real_sum_hi], $ac0                            \n\t"
+        "mflo       %[imag_sum_lo], $ac1                            \n\t"
+        "mfhi       %[imag_sum_hi], $ac1                            \n\t"
+        "subu       %[real_sum_lo2],%[x1],          %[real_sum_lo2] \n\t"
+        "subu       %[imag_sum_lo2],%[x1],          %[imag_sum_lo2] \n\t"
+        "extrv_r.w  %[real_sum_hi2],$ac2,           %[real_sum_lo2] \n\t"   // mant = (int)((accu_re1+round) >> nz)
+        "absq_s.w   %[real_sum_hi], %[real_sum_hi]                  \n\t"   // real_sum_hi is used as mant
+        "extrv_r.w  %[imag_sum_hi2],$ac3,           %[imag_sum_lo2] \n\t"   // mant = (int)((accu_im1+round) >> nz)
+        "absq_s.w   %[imag_sum_hi], %[imag_sum_hi]                  \n\t"   // imag_sum_hi is used as mant
+        "clz        %[real_sum_lo], %[real_sum_hi]                  \n\t"   // real_sum_lo is used as expo
+        "subu       %[real_sum_lo], %[x1],          %[real_sum_lo]  \n\t"
+        "clz        %[imag_sum_lo], %[imag_sum_hi]                  \n\t"   // imag_sum_lo is used as expo
+        "extrv_r.w  %[real_sum_hi], $ac0,           %[real_sum_lo]  \n\t"   // mant = (int)((accu_re1+round) >> nz)
+        "subu       %[imag_sum_lo], %[x1],          %[imag_sum_lo]  \n\t"
+        "shra_r.w   %[real_sum_hi2],%[real_sum_hi2],7               \n\t"
+        "extrv_r.w  %[imag_sum_hi], $ac1,           %[imag_sum_lo]  \n\t"   // mant = (int)((accu_im1+round) >> nz)
+        "shra_r.w   %[imag_sum_hi2],%[imag_sum_hi2],7               \n\t"
+        "sll        %[real_sum_hi2],6                               \n\t"
+        "sll        %[imag_sum_hi2],6                               \n\t"
+        "shra_r.w   %[real_sum_hi], %[real_sum_hi], 7               \n\t"
+        "addiu      %[real_sum_lo2],15                              \n\t"
+        "sll        %[real_sum_hi], 6                               \n\t"
+        "addiu      %[real_sum_lo], 15                              \n\t"
+        "shra_r.w   %[imag_sum_hi], %[imag_sum_hi], 7               \n\t"
+        "addiu      %[imag_sum_lo2],15                              \n\t"
+        "sll        %[imag_sum_hi], 6                               \n\t"
+        "addiu      %[imag_sum_lo], 15                              \n\t"
+
+        ".set       pop                                             \n\t"
+        :[x_ptr]"=&r"(x_ptr), [x_end]"=&r"(x_end),
+         [x1]"=&r"(x1), [x2]"=&r"(x2), [x3]"=&r"(x3), [x4]"=&r"(x4),
+         [x5]"=&r"(x5), [x6]"=&r"(x6), [x7]"=&r"(x7), [x8]"=&r"(x8),
+         [real_sum_lo]"=&r"(real_sum_lo), [real_sum_hi]"=&r"(real_sum_hi),
+         [imag_sum_lo]"=&r"(imag_sum_lo), [imag_sum_hi]"=&r"(imag_sum_hi),
+         [real_sum_lo2]"=&r"(real_sum_lo2), [real_sum_hi2]"=&r"(real_sum_hi2),
+         [imag_sum_lo2]"=&r"(imag_sum_lo2), [imag_sum_hi2]"=&r"(imag_sum_hi2),
+         [mant]"=&r"(mant), [expo]"=&r"(expo), [mant1]"=&r"(mant1), [expo1]"=&r"(expo1)
+        :[x]"r"(x)
+        :"memory", "hi", "lo", "$ac1hi", "$ac1lo", "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+    );
+
+    phi[0][0][0] = int2float(mant, expo);
+    phi[0][0][1] = int2float(mant1, expo1);
+    phi[1][1][0] = int2float(real_sum_hi, real_sum_lo);
+    phi[1][1][1] = int2float(imag_sum_hi, imag_sum_lo);
+    phi[0][1][0] = int2float(real_sum_hi2, real_sum_lo2);
+    phi[0][1][1] = int2float(imag_sum_hi2, imag_sum_lo2);
+}
+
+static void sbr_autocorrelate_q31_mips(const int x[40][2], aac_float_t phi[3][2][2])
+{
+    autocorrelate_q31_0(x, phi);
+    autocorrelate_q31_12(x, phi);
+}
+
+static void sbr_hf_g_filt_int_mips(int (*Y)[2], const int (*X_high)[40][2],
+                            const aac_float_t *g_filt, int m_max, intptr_t ixh)
+{
+    int m, r, c23 = 23, c1 = 1;
+    long long accu, accu1;
+
+    int *g_filt_ptr, *ixh_ptr, *Y_ptr;
+    int b1, b2, m1, m2, tm, tm1, tm2;
+
+    g_filt_ptr = (int *)g_filt;
+    ixh_ptr = (int *)&X_high[0][ixh][0];
+    Y_ptr = (int *)&Y[0][0];
+
+    for (m = 0; m < m_max; m++) {
+        __asm__ volatile (
+            "lw             %[b1],      0(%[g_filt_ptr])        \n\t"
+            "lw             %[tm],      4(%[g_filt_ptr])        \n\t"
+            "lw             %[m2],      0(%[ixh_ptr])           \n\t"
+            "lw             %[b2],      4(%[ixh_ptr])           \n\t"
+            "shra_r.w       %[m1],      %[b1],          7       \n\t"
+            "subu           %[tm],      %[c23],         %[tm]   \n\t"
+
+            : [m1] "=&r" (m1), [b1] "=&r" (b1), [b2] "=&r" (b2),
+              [m2] "=&r" (m2), [tm] "=&r" (tm)
+            : [g_filt_ptr] "r" (g_filt_ptr), [ixh_ptr] "r" (ixh_ptr),
+              [c23] "r" (c23)
+            : "memory"
+        );
+        if (tm < 32) {
+            __asm__ volatile (
+                "mult           $ac0,           %[m1],          %[m2]   \n\t"
+                "mult           $ac1,           %[m1],          %[b2]   \n\t"
+                "extrv_r.w      %[tm1],         $ac0,           %[tm]   \n\t"
+                "extrv_r.w      %[tm2],         $ac1,           %[tm]   \n\t"
+                "addiu          %[g_filt_ptr],  %[g_filt_ptr],  8       \n\t"
+                "addiu          %[ixh_ptr],     %[ixh_ptr],     320     \n\t"
+                "sw             %[tm1],         0(%[Y_ptr])             \n\t"
+                "sw             %[tm2],         4(%[Y_ptr])             \n\t"
+                "addiu          %[Y_ptr],       %[Y_ptr],       8       \n\t"
+
+                : [tm1] "=&r" (tm1), [tm2] "=&r" (tm2), [Y_ptr] "+r" (Y_ptr),
+                  [g_filt_ptr] "+r" (g_filt_ptr), [ixh_ptr] "+r" (ixh_ptr)
+                : [m1] "r" (m1), [b1] "r" (b1), [b2] "r" (b2),
+                  [m2] "r" (m2), [tm] "r" (tm)
+                : "memory", "hi", "lo", "$ac1hi", "$ac1lo"
+            );
+        }
+        else {
+            __asm__ volatile (
+                "subu           %[r],      %[tm],           %[c1]   \n\t"
+                "sllv           %[r],      %[c1],           %[r]    \n\t"
+
+                : [r] "=&r" (r)
+                : [tm] "r" (tm), [c1] "r" (c1)
+            );
+            accu = (long long)m2 * m1;
+            accu1 = (long long)b2 * m1;
+            g_filt_ptr+=2;
+            ixh_ptr+=80;
+            Y_ptr+=2;
+            Y[m][0] = (int)((accu + r) >> tm);
+            Y[m][1] = (int)((accu1 + r) >> tm);
+        }
+    }
+}
+static void sbr_qmf_deint_bfly_int_mips(int *v, const int *src0, const int *src1)
+{
+    int i, b1, b2, m1, m2, tm1, tm2;
+    int b3, b4, m3, m4, tm3, tm4;
+    int *v1 = v + 127;
+    src1 = src1 + 63;
+
+    for (i = 0; i < 64; i+=4) {
+        __asm__ volatile (
+            "lw             %[b1],      0(%[src0])              \n\t"
+            "lw             %[b3],      4(%[src0])              \n\t"
+            "lw             %[b2],      0(%[src1])              \n\t"
+            "lw             %[b4],      -4(%[src1])             \n\t"
+            "subu           %[m1],      %[b1],          %[b2]   \n\t"
+            "addu           %[m2],      %[b1],          %[b2]   \n\t"
+            "subu           %[m3],      %[b3],          %[b4]   \n\t"
+            "addu           %[m4],      %[b3],          %[b4]   \n\t"
+            "shra_r.w       %[tm1],     %[m1],          5       \n\t"
+            "shra_r.w       %[tm2],     %[m2],          5       \n\t"
+            "shra_r.w       %[tm3],     %[m3],          5       \n\t"
+            "shra_r.w       %[tm4],     %[m4],          5       \n\t"
+            "lw             %[b1],      8(%[src0])              \n\t"
+            "lw             %[b3],      12(%[src0])             \n\t"
+            "lw             %[b2],      -8(%[src1])             \n\t"
+            "lw             %[b4],      -12(%[src1])            \n\t"
+            "sw             %[tm1],     0(%[v])                 \n\t"
+            "sw             %[tm2],     0(%[v1])                \n\t"
+            "sw             %[tm3],     4(%[v])                 \n\t"
+            "sw             %[tm4],     -4(%[v1])               \n\t"
+            "subu           %[m1],      %[b1],          %[b2]   \n\t"
+            "addu           %[m2],      %[b1],          %[b2]   \n\t"
+            "subu           %[m3],      %[b3],          %[b4]   \n\t"
+            "addu           %[m4],      %[b3],          %[b4]   \n\t"
+            "shra_r.w       %[tm1],     %[m1],          5       \n\t"
+            "shra_r.w       %[tm2],     %[m2],          5       \n\t"
+            "shra_r.w       %[tm3],     %[m3],          5       \n\t"
+            "shra_r.w       %[tm4],     %[m4],          5       \n\t"
+            "addiu          %[src0],    %[src0],        16      \n\t"
+            "addiu          %[src1],    %[src1],        -16     \n\t"
+            "sw             %[tm1],     8(%[v])                 \n\t"
+            "sw             %[tm2],     -8(%[v1])               \n\t"
+            "sw             %[tm3],     12(%[v])                \n\t"
+            "sw             %[tm4],     -12(%[v1])              \n\t"
+            "addiu          %[v],       %[v],           16      \n\t"
+            "addiu          %[v1],      %[v1],          -16     \n\t"
+
+            : [m1] "=&r" (m1), [b1] "=&r" (b1), [src0] "+r" (src0),
+              [m2] "=&r" (m2), [b2] "=&r" (b2), [src1] "+r" (src1),
+              [m3] "=r" (m3), [b3] "=&r" (b3),
+              [m4] "=r" (m4), [b4] "=&r" (b4),
+              [tm1] "=&r" (tm1), [tm2] "=&r" (tm2), [v] "+r" (v), [v1] "+r" (v1),
+              [tm3] "=&r" (tm3), [tm4] "=&r" (tm4)
+            :
+            : "memory"
+        );
+    }
+}
+
+static void sbr_hf_gen_int_mips(int (*X_high)[2], const int (*X_low)[2],
+                             const int alpha0[2], const int alpha1[2],
+                             int bw, int start, int end)
+{
+    int i;
+    int a0, a1, a2, a3;
+    int b1, b2, m1, m2, v1, v2;
+    int bw1, bw2, bw3, bw4;
+    int *Xh_ptr, *Xl_ptr;
+    int c2 = 0x20000000;
+
+    __asm__ volatile (
+        "lw             %[m1],          0(%[alpha0])            \n\t"
+        "mult           $ac2,           %[bw],          %[bw]   \n\t"
+        "extr_r.w       %[bw1],         $ac2,           31      \n\t"
+        "lw             %[m2],          4(%[alpha0])            \n\t"
+        "lw             %[b1],          0(%[alpha1])            \n\t"
+        "lw             %[b2],          4(%[alpha1])            \n\t"
+        "mult           $ac0,           %[m1],          %[bw]   \n\t"
+        "mult           $ac1,           %[m2],          %[bw]   \n\t"
+        "mult           $ac2,           %[b1],          %[bw1]  \n\t"
+        "mult           $ac3,           %[b2],          %[bw1]  \n\t"
+        "extr_r.w       %[a2],          $ac0,           31      \n\t"
+        "extr_r.w       %[a3],          $ac1,           31      \n\t"
+        "extr_r.w       %[a0],          $ac2,           31      \n\t"
+        "extr_r.w       %[a1],          $ac3,           31      \n\t"
+
+        : [m1] "=&r" (m1), [m2] "=&r" (m2),
+          [b1] "=&r" (b1), [b2] "=&r" (b2),
+          [a0] "=r" (a0), [a1] "=r" (a1),
+          [a2] "=r" (a2), [a3] "=r" (a3), [bw1] "=&r" (bw1)
+        : [alpha0] "r" (alpha0), [alpha1] "r" (alpha1), [bw] "r" (bw)
+        : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+          "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+    );
+
+    Xh_ptr = (int *)&X_high[start][0];
+    Xl_ptr = (int *)&X_low[start][0];
+
+    for (i = start; i < end; i+=2) {
+        __asm__ volatile (
+            "lw             %[v1],          0(%[Xl_ptr])            \n\t"
+            "lw             %[m1],          -16(%[Xl_ptr])          \n\t"
+            "lw             %[m2],          -12(%[Xl_ptr])          \n\t"
+            "lw             %[b1],          -8(%[Xl_ptr])           \n\t"
+            "lw             %[b2],          -4(%[Xl_ptr])           \n\t"
+            "lw             %[v2],          4(%[Xl_ptr])            \n\t"
+            "mult           $ac0,           %[v1],          %[c2]   \n\t"
+            "madd           $ac0,           %[m1],          %[a0]   \n\t"
+            "msub           $ac0,           %[m2],          %[a1]   \n\t"
+            "madd           $ac0,           %[b1],          %[a2]   \n\t"
+            "msub           $ac0,           %[b2],          %[a3]   \n\t"
+            "mult           $ac1,           %[v2],          %[c2]   \n\t"
+            "madd           $ac1,           %[m2],          %[a0]   \n\t"
+            "madd           $ac1,           %[m1],          %[a1]   \n\t"
+            "madd           $ac1,           %[b2],          %[a2]   \n\t"
+            "madd           $ac1,           %[b1],          %[a3]   \n\t"
+            "lw             %[m1],          8(%[Xl_ptr])            \n\t"
+            "lw             %[m2],          12(%[Xl_ptr])           \n\t"
+            "mult           $ac2,           %[m1],          %[c2]   \n\t"
+            "madd           $ac2,           %[b1],          %[a0]   \n\t"
+            "msub           $ac2,           %[b2],          %[a1]   \n\t"
+            "madd           $ac2,           %[v1],          %[a2]   \n\t"
+            "msub           $ac2,           %[v2],          %[a3]   \n\t"
+            "mult           $ac3,           %[m2],          %[c2]   \n\t"
+            "madd           $ac3,           %[b2],          %[a0]   \n\t"
+            "madd           $ac3,           %[b1],          %[a1]   \n\t"
+            "madd           $ac3,           %[v2],          %[a2]   \n\t"
+            "madd           $ac3,           %[v1],          %[a3]   \n\t"
+            "extr_r.w       %[bw1],         $ac0,           29      \n\t"
+            "extr_r.w       %[bw2],         $ac1,           29      \n\t"
+            "extr_r.w       %[bw3],         $ac2,           29      \n\t"
+            "extr_r.w       %[bw4],         $ac3,           29      \n\t"
+            "addiu          %[Xl_ptr],      %[Xl_ptr],      16      \n\t"
+            "sw             %[bw1],         0(%[Xh_ptr])            \n\t"
+            "sw             %[bw2],         4(%[Xh_ptr])            \n\t"
+            "sw             %[bw3],         8(%[Xh_ptr])            \n\t"
+            "sw             %[bw4],         12(%[Xh_ptr])           \n\t"
+            "addiu          %[Xh_ptr],      %[Xh_ptr],      16      \n\t"
+
+            : [m1] "=&r" (m1), [m2] "=&r" (m2), [v1] "=&r" (v1), [v2] "=&r" (v2),
+              [b1] "=&r" (b1), [b2] "=&r" (b2), [bw1] "=&r" (bw1),
+              [bw2] "=&r" (bw2), [bw3] "=&r" (bw3), [bw4] "=&r" (bw4)
+            : [Xl_ptr] "r" (Xl_ptr), [Xh_ptr] "r" (Xh_ptr),
+              [a0] "r" (a0), [a1] "r" (a1),
+              [a2] "r" (a2), [a3] "r" (a3), [c2] "r" (c2)
+            : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+              "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+        );
+    }
+}
+#else
+#if HAVE_MIPS32R2
+static void sbr_qmf_deint_bfly_int_mips(int *v, const int *src0, const int *src1)
+{
+    int i, b1, b2, m1, m2, tm1, tm2;
+    int b3, b4, m3, m4, tm3, tm4;
+    int *v1 = v + 127;
+    src1 = src1 + 63;
+
+    for (i = 0; i < 64; i+=4) {
+
+        __asm__ volatile (
+            "lw             %[b1],      0(%[src0])              \n\t"
+            "lw             %[b3],      4(%[src0])              \n\t"
+            "lw             %[b2],      0(%[src1])              \n\t"
+            "lw             %[b4],      -4(%[src1])             \n\t"
+            "subu           %[m1],      %[b1],          %[b2]   \n\t"
+            "addu           %[m2],      %[b1],          %[b2]   \n\t"
+            "subu           %[m3],      %[b3],          %[b4]   \n\t"
+            "addu           %[m4],      %[b3],          %[b4]   \n\t"
+            "addiu          %[m1],      %[m1],          16      \n\t"
+            "addiu          %[m2],      %[m2],          16      \n\t"
+            "addiu          %[m3],      %[m3],          16      \n\t"
+            "addiu          %[m4],      %[m4],          16      \n\t"
+            "sra            %[tm1],     %[m1],          5       \n\t"
+            "sra            %[tm2],     %[m2],          5       \n\t"
+            "sra            %[tm3],     %[m3],          5       \n\t"
+            "sra            %[tm4],     %[m4],          5       \n\t"
+            "lw             %[b1],      8(%[src0])              \n\t"
+            "lw             %[b3],      12(%[src0])             \n\t"
+            "lw             %[b2],      -8(%[src1])             \n\t"
+            "lw             %[b4],      -12(%[src1])            \n\t"
+            "sw             %[tm1],     0(%[v])                 \n\t"
+            "sw             %[tm2],     0(%[v1])                \n\t"
+            "sw             %[tm3],     4(%[v])                 \n\t"
+            "sw             %[tm4],     -4(%[v1])               \n\t"
+            "subu           %[m1],      %[b1],          %[b2]   \n\t"
+            "addu           %[m2],      %[b1],          %[b2]   \n\t"
+            "subu           %[m3],      %[b3],          %[b4]   \n\t"
+            "addu           %[m4],      %[b3],          %[b4]   \n\t"
+            "addiu          %[m1],      %[m1],          16      \n\t"
+            "addiu          %[m2],      %[m2],          16      \n\t"
+            "addiu          %[m3],      %[m3],          16      \n\t"
+            "addiu          %[m4],      %[m4],          16      \n\t"
+            "sra            %[tm1],     %[m1],          5       \n\t"
+            "sra            %[tm2],     %[m2],          5       \n\t"
+            "sra            %[tm3],     %[m3],          5       \n\t"
+            "sra            %[tm4],     %[m4],          5       \n\t"
+            "addiu          %[src0],    %[src0],        16      \n\t"
+            "addiu          %[src1],    %[src1],        -16     \n\t"
+            "sw             %[tm1],     8(%[v])                 \n\t"
+            "sw             %[tm2],     -8(%[v1])               \n\t"
+            "sw             %[tm3],     12(%[v])                \n\t"
+            "sw             %[tm4],     -12(%[v1])              \n\t"
+            "addiu          %[v],       %[v],           16      \n\t"
+            "addiu          %[v1],      %[v1],          -16     \n\t"
+
+            : [m1] "=&r" (m1), [b1] "=&r" (b1), [src0] "+r" (src0),
+              [m2] "=&r" (m2), [b2] "=&r" (b2), [src1] "+r" (src1),
+              [m3] "=&r" (m3), [b3] "=&r" (b3),
+              [m4] "=&r" (m4), [b4] "=&r" (b4),
+              [tm1] "=&r" (tm1), [tm2] "=&r" (tm2), [v] "+r" (v), [v1] "+r" (v1),
+              [tm3] "=&r" (tm3), [tm4] "=&r" (tm4)
+            :
+            : "memory"
+        );
+    }
+}
+static void sbr_hf_gen_int_mips(int (*X_high)[2], const int (*X_low)[2],
+                             const int alpha0[2], const int alpha1[2],
+                             int bw, int start, int end)
+{
+    int i;
+    int a0, a1, a2, a3;
+    int b1, b2, m1, m2, v1, v2;
+    int bw1, bw2, bw3, bw4;
+    int *Xh_ptr, *Xl_ptr;
+    int c1 = 0x40000000;
+    int c2 = 0x20000000;
+    int c3 = 0x10000000;
+
+    __asm__ volatile (
+        "lw             %[m1],          0(%[alpha0])            \n\t"
+        "mthi           $0                                      \n\t"
+        "mtlo           %[c1]                                   \n\t"
+        "madd           %[bw],          %[bw]                   \n\t"
+        "mfhi           %[bw3]                                  \n\t"
+        "mflo           %[bw4]                                  \n\t"
+        "sll            %[bw3],         %[bw3],         1       \n\t"
+        "srl            %[bw4],         %[bw4],         31      \n\t"
+        "or             %[bw1],         %[bw3],         %[bw4]  \n\t"
+        "lw             %[m2],          4(%[alpha0])            \n\t"
+        "lw             %[b1],          0(%[alpha1])            \n\t"
+        "lw             %[b2],          4(%[alpha1])            \n\t"
+        "mthi           $0                                      \n\t"
+        "mtlo           %[c1]                                   \n\t"
+        "madd           %[m1],          %[bw]                   \n\t"
+        "mfhi           %[bw3]                                  \n\t"
+        "mflo           %[bw4]                                  \n\t"
+        "sll            %[bw3],         %[bw3],         1       \n\t"
+        "srl            %[bw4],         %[bw4],         31      \n\t"
+        "or             %[a2],          %[bw3],         %[bw4]  \n\t"
+        "mthi           $0                                      \n\t"
+        "mtlo           %[c1]                                   \n\t"
+        "madd           %[m2],          %[bw]                   \n\t"
+        "mfhi           %[bw3]                                  \n\t"
+        "mflo           %[bw4]                                  \n\t"
+        "sll            %[bw3],         %[bw3],         1       \n\t"
+        "srl            %[bw4],         %[bw4],         31      \n\t"
+        "or             %[a3],          %[bw3],         %[bw4]  \n\t"
+        "mthi           $0                                      \n\t"
+        "mtlo           %[c1]                                   \n\t"
+        "madd           %[b1],          %[bw1]                  \n\t"
+        "mfhi           %[bw3]                                  \n\t"
+        "mflo           %[bw4]                                  \n\t"
+        "sll            %[bw3],         %[bw3],         1       \n\t"
+        "srl            %[bw4],         %[bw4],         31      \n\t"
+        "or             %[a0],          %[bw3],         %[bw4]  \n\t"
+        "mthi           $0                                      \n\t"
+        "mtlo           %[c1]                                   \n\t"
+        "madd           %[b2],          %[bw1]                  \n\t"
+        "mfhi           %[bw3]                                  \n\t"
+        "mflo           %[bw4]                                  \n\t"
+        "sll            %[bw3],         %[bw3],         1       \n\t"
+        "srl            %[bw4],         %[bw4],         31      \n\t"
+        "or             %[a1],          %[bw3],         %[bw4]  \n\t"
+
+        : [m1] "=&r" (m1), [m2] "=&r" (m2),
+          [b1] "=&r" (b1), [b2] "=&r" (b2),
+          [a0] "=&r" (a0), [a1] "=r" (a1),
+          [a2] "=&r" (a2), [a3] "=&r" (a3),
+          [bw1] "=&r" (bw1), [bw3] "=&r" (bw3), [bw4] "=&r" (bw4)
+        : [alpha0] "r" (alpha0), [alpha1] "r" (alpha1),
+          [bw] "r" (bw), [c1] "r" (c1)
+        : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+          "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+    );
+
+    Xh_ptr = (int *)&X_high[start][0];
+    Xl_ptr = (int *)&X_low[start][0];
+
+    for (i = start; i < end; i+=2) {
+        __asm__ volatile (
+            "lw             %[v1],          0(%[Xl_ptr])            \n\t"
+            "lw             %[m1],          -16(%[Xl_ptr])          \n\t"
+            "lw             %[m2],          -12(%[Xl_ptr])          \n\t"
+            "lw             %[b1],          -8(%[Xl_ptr])           \n\t"
+            "lw             %[b2],          -4(%[Xl_ptr])           \n\t"
+            "lw             %[v2],          4(%[Xl_ptr])            \n\t"
+            "mthi           $0                                      \n\t"
+            "mtlo           %[c3]                                   \n\t"
+            "madd           %[v1],          %[c2]                   \n\t"
+            "madd           %[m1],          %[a0]                   \n\t"
+            "msub           %[m2],          %[a1]                   \n\t"
+            "madd           %[b1],          %[a2]                   \n\t"
+            "msub           %[b2],          %[a3]                   \n\t"
+            "mfhi           %[bw3]                                  \n\t"
+            "mflo           %[bw4]                                  \n\t"
+            "sll            %[bw3],         %[bw3],         3       \n\t"
+            "srl            %[bw4],         %[bw4],         29      \n\t"
+            "or             %[bw1],         %[bw3],         %[bw4]  \n\t"
+            "mthi           $0                                      \n\t"
+            "mtlo           %[c3]                                   \n\t"
+            "madd           %[v2],          %[c2]                   \n\t"
+            "madd           %[m2],          %[a0]                   \n\t"
+            "madd           %[m1],          %[a1]                   \n\t"
+            "madd           %[b2],          %[a2]                   \n\t"
+            "madd           %[b1],          %[a3]                   \n\t"
+            "mfhi           %[bw3]                                  \n\t"
+            "mflo           %[bw4]                                  \n\t"
+            "sll            %[bw3],         %[bw3],         3       \n\t"
+            "srl            %[bw4],         %[bw4],         29      \n\t"
+            "or             %[bw2],         %[bw3],         %[bw4]  \n\t"
+            "lw             %[m1],          8(%[Xl_ptr])            \n\t"
+            "lw             %[m2],          12(%[Xl_ptr])           \n\t"
+            "mthi           $0                                      \n\t"
+            "mtlo           %[c3]                                   \n\t"
+            "madd           %[m1],          %[c2]                   \n\t"
+            "madd           %[b1],          %[a0]                   \n\t"
+            "msub           %[b2],          %[a1]                   \n\t"
+            "madd           %[v1],          %[a2]                   \n\t"
+            "msub           %[v2],          %[a3]                   \n\t"
+            "mfhi           %[bw3]                                  \n\t"
+            "mflo           %[bw4]                                  \n\t"
+            "sll            %[bw3],         %[bw3],         3       \n\t"
+            "srl            %[bw4],         %[bw4],         29      \n\t"
+            "or             %[bw3],         %[bw3],         %[bw4]  \n\t"
+            "mthi           $0                                      \n\t"
+            "mtlo           %[c3]                                   \n\t"
+            "madd           %[m2],          %[c2]                   \n\t"
+            "madd           %[b2],          %[a0]                   \n\t"
+            "madd           %[b1],          %[a1]                   \n\t"
+            "madd           %[v2],          %[a2]                   \n\t"
+            "madd           %[v1],          %[a3]                   \n\t"
+            "mfhi           %[m1]                                   \n\t"
+            "mflo           %[m2]                                   \n\t"
+            "sll            %[m1],          %[m1],          3       \n\t"
+            "srl            %[m2],          %[m2],          29      \n\t"
+            "or             %[bw4],         %[m1],          %[m2]   \n\t"
+            "addiu          %[Xl_ptr],      %[Xl_ptr],      16      \n\t"
+            "sw             %[bw1],         0(%[Xh_ptr])            \n\t"
+            "sw             %[bw2],         4(%[Xh_ptr])            \n\t"
+            "sw             %[bw3],         8(%[Xh_ptr])            \n\t"
+            "sw             %[bw4],         12(%[Xh_ptr])           \n\t"
+            "addiu          %[Xh_ptr],      %[Xh_ptr],      16      \n\t"
+
+            : [m1] "=&r" (m1), [m2] "=&r" (m2), [v1] "=&r" (v1), [v2] "=&r" (v2),
+              [b1] "=&r" (b1), [b2] "=&r" (b2), [bw1] "=&r" (bw1),
+              [bw2] "=&r" (bw2), [bw3] "=&r" (bw3), [bw4] "=&r" (bw4)
+            : [Xl_ptr] "r" (Xl_ptr), [Xh_ptr] "r" (Xh_ptr),
+              [a0] "r" (a0), [a1] "r" (a1), [c3] "r" (c3),
+              [a2] "r" (a2), [a3] "r" (a3), [c2] "r" (c2)
+            : "memory", "hi", "lo"
+        );
+    }
+}
+
+static void sbr_hf_g_filt_int_mips(int (*Y)[2], const int (*X_high)[40][2],
+                            const aac_float_t *g_filt, int m_max, intptr_t ixh)
+{
+    int m, r, r1, c23 = 23, c32 = 32, c1 = 1;
+    long long accu, accu1, accu2, accu3;
+    int *g_filt_ptr, *ixh_ptr, *Y_ptr;
+    int b1, b2, m1, m2, tm, tm1, tm2;
+    int b3, b4, m3, m4, tmi, tm3, tm4, sh1;
+
+    g_filt_ptr = (int *)g_filt;
+    ixh_ptr = (int *)&X_high[0][ixh][0];
+    Y_ptr = (int *)&Y[0][0];
+
+    for (m = 0; m < (m_max >> 1); m++) {
+        __asm__ volatile (
+            "lw             %[b1],      0(%[g_filt_ptr])        \n\t"
+            "lw             %[tm],      4(%[g_filt_ptr])        \n\t"
+            "lw             %[m2],      0(%[ixh_ptr])           \n\t"
+            "lw             %[b2],      4(%[ixh_ptr])           \n\t"
+            "lw             %[b3],      8(%[g_filt_ptr])        \n\t"
+            "lw             %[tmi],     12(%[g_filt_ptr])       \n\t"
+            "lw             %[m4],      320(%[ixh_ptr])         \n\t"
+            "lw             %[b4],      324(%[ixh_ptr])         \n\t"
+            "addiu          %[b1],      %[b1],          64      \n\t"
+            "sra            %[m1],      %[b1],          7       \n\t"
+            "subu           %[tm],      %[c23],         %[tm]   \n\t"
+            "addiu          %[b3],      %[b3],          64      \n\t"
+            "sra            %[m3],      %[b3],          7       \n\t"
+            "subu           %[tmi],     %[c23],         %[tmi]  \n\t"
+
+            : [m1] "=&r" (m1), [b1] "=&r" (b1), [b2] "=&r" (b2),
+              [m2] "=&r" (m2), [tm] "=&r" (tm),
+              [m3] "=&r" (m3), [b3] "=&r" (b3), [b4] "=&r" (b4),
+              [m4] "=&r" (m4), [tmi] "=&r" (tmi)
+            : [g_filt_ptr] "r" (g_filt_ptr), [ixh_ptr] "r" (ixh_ptr),
+              [c23] "r" (c23)
+            : "memory"
+        );
+
+        if ((tm < 32) && (tmi < 32)) {
+            __asm__ volatile (
+                "subu           %[sh1],         %[c32],         %[tm]   \n\t"
+                "subu           %[r],           %[tm],          %[c1]   \n\t"
+                "sllv           %[r],           %[c1],          %[r]    \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m1],          %[m2]                   \n\t"
+                "mfhi           %[b1]                                   \n\t"
+                "mflo           %[b3]                                   \n\t"
+                "sllv           %[b1],          %[b1],          %[sh1]  \n\t"
+                "srlv           %[b3],          %[b3],          %[tm]   \n\t"
+                "or             %[tm1],         %[b1],          %[b3]   \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m1],          %[b2]                   \n\t"
+                "mfhi           %[m1]                                   \n\t"
+                "mflo           %[m2]                                   \n\t"
+                "sllv           %[m1],          %[m1],          %[sh1]  \n\t"
+                "srlv           %[m2],          %[m2],          %[tm]   \n\t"
+                "or             %[tm2],         %[m1],          %[m2]   \n\t"
+                "subu           %[sh1],         %[c32],         %[tmi]  \n\t"
+                "subu           %[r],           %[tmi],         %[c1]   \n\t"
+                "sllv           %[r],           %[c1],          %[r]    \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m3],          %[m4]                   \n\t"
+                "mfhi           %[m1]                                   \n\t"
+                "mflo           %[m2]                                   \n\t"
+                "sllv           %[m1],          %[m1],          %[sh1]  \n\t"
+                "srlv           %[m2],          %[m2],          %[tmi]  \n\t"
+                "or             %[tm3],         %[m1],          %[m2]   \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m3],          %[b4]                   \n\t"
+                "mfhi           %[m1]                                   \n\t"
+                "mflo           %[m2]                                   \n\t"
+                "sllv           %[m1],          %[m1],          %[sh1]  \n\t"
+                "srlv           %[m2],          %[m2],          %[tmi]  \n\t"
+                "or             %[tm4],         %[m1],          %[m2]   \n\t"
+                "addiu          %[g_filt_ptr],  %[g_filt_ptr],  16      \n\t"
+                "addiu          %[ixh_ptr],     %[ixh_ptr],     640     \n\t"
+                "sw             %[tm1],         0(%[Y_ptr])             \n\t"
+                "sw             %[tm2],         4(%[Y_ptr])             \n\t"
+                "sw             %[tm3],         8(%[Y_ptr])             \n\t"
+                "sw             %[tm4],         12(%[Y_ptr])            \n\t"
+                "addiu          %[Y_ptr],       %[Y_ptr],       16      \n\t"
+
+                : [tm1] "=&r" (tm1), [tm2] "=&r" (tm2), [Y_ptr] "+r" (Y_ptr),
+                  [g_filt_ptr] "+r" (g_filt_ptr), [ixh_ptr] "+r" (ixh_ptr),
+                  [tm3] "=&r" (tm3), [tm4] "=&r" (tm4), [sh1] "=&r" (sh1),
+                  [r] "=&r" (r), [b1] "=&r" (b1), [b3] "=&r" (b3)
+                : [m1] "r" (m1), [b2] "r" (b2), [c1] "r" (c1),
+                  [m2] "r" (m2), [tm] "r" (tm), [c32] "r" (c32),
+                  [m3] "r" (m3), [b4] "r" (b4),
+                  [m4] "r" (m4), [tmi] "r" (tmi)
+                : "memory", "hi", "lo"
+            );
+        } else {
+            __asm__ volatile (
+                "subu           %[r],      %[tm],           %[c1]   \n\t"
+                "subu           %[r1],     %[tmi],          %[c1]   \n\t"
+                "sllv           %[r],      %[c1],           %[r]    \n\t"
+                "sllv           %[r1],     %[c1],           %[r1]   \n\t"
+
+                : [r] "=&r" (r), [r1] "=&r" (r1)
+                : [tmi] "r" (tmi), [tm] "r" (tm), [c1] "r" (c1)
+                :
+            );
+
+            accu = (long long)m2 * m1;
+            accu1 = (long long)b2 * m1;
+            accu2 = (long long)m4 * m3;
+            accu3 = (long long)b4 * m3;
+            g_filt_ptr+=4;
+            ixh_ptr+=160;
+            Y_ptr+=4;
+            Y[2*m][0] = (int)((accu + r) >> tm);
+            Y[2*m][1] = (int)((accu1 + r) >> tm);
+            Y[2*m+1][0] = (int)((accu2 + r1) >> tmi);
+            Y[2*m+1][1] = (int)((accu3 + r1) >> tmi);
+        }
+    }
+
+    if(m_max & 1){
+        __asm__ volatile (
+            "lw             %[b1],      0(%[g_filt_ptr])        \n\t"
+            "lw             %[tm],      4(%[g_filt_ptr])        \n\t"
+            "lw             %[m2],      0(%[ixh_ptr])           \n\t"
+            "lw             %[b2],      4(%[ixh_ptr])           \n\t"
+            "addiu          %[b1],      %[b1],          64      \n\t"
+            "sra            %[m1],      %[b1],          7       \n\t"
+            "subu           %[tm],      %[c23],         %[tm]   \n\t"
+
+            : [m1] "=&r" (m1), [b1] "=&r" (b1), [b2] "=&r" (b2),
+              [m2] "=&r" (m2), [tm] "=&r" (tm)
+            : [g_filt_ptr] "r" (g_filt_ptr), [ixh_ptr] "r" (ixh_ptr),
+              [c23] "r" (c23)
+            : "memory"
+        );
+
+        if (tm < 32) {
+            __asm__ volatile (
+                "subu           %[sh1],         %[c32],         %[tm]   \n\t"
+                "subu           %[r],           %[tm],          %[c1]   \n\t"
+                "sllv           %[r],           %[c1],          %[r]    \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m1],          %[m2]                   \n\t"
+                "mfhi           %[b1]                                   \n\t"
+                "mflo           %[b3]                                   \n\t"
+                "sllv           %[b1],          %[b1],          %[sh1]  \n\t"
+                "srlv           %[b3],          %[b3],          %[tm]   \n\t"
+                "or             %[tm1],         %[b1],          %[b3]   \n\t"
+                "mthi           $0                                      \n\t"
+                "mtlo           %[r]                                    \n\t"
+                "madd           %[m1],          %[b2]                   \n\t"
+                "mfhi           %[m1]                                   \n\t"
+                "mflo           %[m2]                                   \n\t"
+                "sllv           %[m1],          %[m1],          %[sh1]  \n\t"
+                "srlv           %[m2],          %[m2],          %[tm]   \n\t"
+                "or             %[tm2],         %[m1],          %[m2]   \n\t"
+                "sw             %[tm1],         0(%[Y_ptr])             \n\t"
+                "sw             %[tm2],         4(%[Y_ptr])             \n\t"
+
+                : [tm1] "=&r" (tm1), [tm2] "=&r" (tm2), [Y_ptr] "+r" (Y_ptr),
+                  [g_filt_ptr] "+r" (g_filt_ptr), [ixh_ptr] "+r" (ixh_ptr),
+                  [sh1] "=&r" (sh1), [r] "=&r" (r), [b1] "=&r" (b1), [b3] "=&r" (b3)
+                : [m1] "r" (m1), [b2] "r" (b2), [c1] "r" (c1),
+                  [m2] "r" (m2), [tm] "r" (tm), [c32] "r" (c32)
+                : "memory", "hi", "lo"
+            );
+        } else {
+            __asm__ volatile (
+                "subu           %[r],      %[tm],           %[c1]   \n\t"
+                "sllv           %[r],      %[c1],           %[r]    \n\t"
+
+                : [r] "=&r" (r)
+                : [tm] "r" (tm), [c1] "r" (c1)
+                :
+            );
+
+            accu = (long long)m2 * m1;
+            accu1 = (long long)b2 * m1;
+            Y[m_max-1][0] = (int)((accu + r) >> tm);
+            Y[m_max-1][1] = (int)((accu1 + r) >> tm);
+        }
+    }
+}
+#endif /* HAVE_MIPS32R2 */
+#endif /* HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2 */
 #endif /* HAVE_INLINE_ASM */
 
 void ff_sbrdsp_init_mips(SBRDSPContext *s)
 {
 #if HAVE_INLINE_ASM
-    s->neg_odd_64 = sbr_neg_odd_64_mips;
-    s->qmf_pre_shuffle = sbr_qmf_pre_shuffle_mips;
+    s->neg_odd_64       = sbr_neg_odd_64_mips;
+    s->qmf_pre_shuffle  = sbr_qmf_pre_shuffle_mips;
     s->qmf_post_shuffle = sbr_qmf_post_shuffle_mips;
 #if HAVE_MIPSFPU
-    s->sum64x5 = sbr_sum64x5_mips;
-    s->sum_square = sbr_sum_square_mips;
-    s->qmf_deint_bfly = sbr_qmf_deint_bfly_mips;
-    s->autocorrelate = sbr_autocorrelate_mips;
-    s->hf_gen = sbr_hf_gen_mips;
-    s->hf_g_filt = sbr_hf_g_filt_mips;
+    s->sum64x5          = sbr_sum64x5_mips;
+    s->sum_square       = sbr_sum_square_mips;
+    s->qmf_deint_bfly   = sbr_qmf_deint_bfly_mips;
+    s->autocorrelate    = sbr_autocorrelate_mips;
+    s->hf_gen           = sbr_hf_gen_mips;
+    s->hf_g_filt        = sbr_hf_g_filt_mips;
 
     s->hf_apply_noise[0] = sbr_hf_apply_noise_0_mips;
     s->hf_apply_noise[1] = sbr_hf_apply_noise_1_mips;
     s->hf_apply_noise[2] = sbr_hf_apply_noise_2_mips;
     s->hf_apply_noise[3] = sbr_hf_apply_noise_3_mips;
 #endif /* HAVE_MIPSFPU */
+#if HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2
+    s->autocorrelate_q31 = sbr_autocorrelate_q31_mips;
+#endif
+#if HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2 || HAVE_MIPS32R2
+    s->hf_g_filt_int        = sbr_hf_g_filt_int_mips;
+    s->hf_gen_fixed         = sbr_hf_gen_int_mips;
+    s->qmf_deint_bfly_fixed = sbr_qmf_deint_bfly_int_mips;
+#endif
 #endif /* HAVE_INLINE_ASM */
 }

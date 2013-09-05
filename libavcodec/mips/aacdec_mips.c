@@ -26,9 +26,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Authors:  Darko Laus      (darko@mips.com)
- *           Djordje Pesut   (djordje@mips.com)
- *           Mirjana Vulin   (mvulin@mips.com)
+ * Authors:  Darko Laus      (darko.laus imgtec com)
+ *           Djordje Pesut   (djordje.pesut imgtec com)
+ *           Mirjana Vulin   (mirjana.vulin imgtec com)
  *
  * This file is part of FFmpeg.
  *
@@ -56,6 +56,7 @@
 #include "aacdec_mips.h"
 #include "libavcodec/aactab.h"
 #include "libavcodec/sinewin.h"
+#include "libavcodec/cbrt_fixed_tables.h"
 
 #if HAVE_INLINE_ASM
 static av_always_inline int lcg_random(unsigned previous_val)
@@ -817,7 +818,7 @@ static void update_ltp_mips(AACContext *ac, SingleChannelElement *sce)
 }
 #endif /* HAVE_INLINE_ASM*/
 
-void ff_aacdec_init_mips(AACContext *c)
+void ff_aacdec_float_init_mips(AACContext *c)
 {
 #if HAVE_INLINE_ASM
     c->imdct_and_windowing         = imdct_and_windowing_mips;

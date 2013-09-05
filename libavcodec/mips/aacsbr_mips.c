@@ -26,8 +26,8 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Authors:  Djordje Pesut   (djordje@mips.com)
- *           Mirjana Vulin   (mvulin@mips.com)
+ * Authors:  Djordje Pesut   (djordje.pesut imgtec com)
+ *           Mirjana Vulin   (mirjana.vulin imgtec com)
  *
  * This file is part of FFmpeg.
  *

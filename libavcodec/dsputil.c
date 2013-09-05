@@ -2507,6 +2507,63 @@ WRAPPER8_16_SQ(quant_psnr8x8_c, quant_psnr16_c)
 WRAPPER8_16_SQ(rd8x8_c, rd16_c)
 WRAPPER8_16_SQ(bit8x8_c, bit16_c)
 
+static void vector_q31mul_reverse_c(int *dst, const int *src0, const int *src1, int len)
+{
+    int i;
+    long long accu;
+
+    src1 += len-1;
+    for (i=0; i<len; i++) {
+        accu = (long long)src0[i] * src1[-i];
+        dst[i] = (int)((accu+0x40000000) >> 31);
+    }
+}
+
+static void vector_imul_add_c(int *dst, const int *src0, const int *src1, const int *src2, int len){
+    int i;
+    int64_t accu;
+
+    for(i=0; i<len; i++) {
+        accu = (int64_t)src0[i] * src1[i];
+        dst[i] = src2[i] + (int)((accu + 0x40000000) >> 31);
+    }
+}
+
+static void vector_q31mul_window_c(int *dst, const int *src0, const int *src1, const int *win, int len)
+{
+    int i,j;
+    int64_t accu;
+
+    dst += len;
+    win += len;
+    src0+= len;
+
+    for (i=-len, j=len-1; i<0; i++, j--) {
+        int s0 = src0[i];
+        int s1 = src1[j];
+        int wi = win[i];
+        int wj = win[j];
+
+        accu  = (int64_t)s0*wj;
+        accu -= (int64_t)s1*wi;
+        dst[i] = (int)((accu + 0x40000000) >> 31);
+        accu  = (int64_t)s0*wi;
+        accu += (int64_t)s1*wj;
+        dst[j] = (int)((accu + 0x40000000) >> 31);
+    }
+}
+
+static void vector_q31mul_c(int *dst, const int *src0, const int *src1, int len)
+{
+    int i;
+    int64_t accu;
+
+    for (i = 0; i < len; i++) {
+        accu = (int64_t)src0[i] * src1[i];
+        dst[i] = (int)((accu+0x40000000) >> 31);
+    }
+}
+
 int ff_scalarproduct_q31_c(const int *v1, const int *v2, int len)
 {
     long long p = 0;
@@ -2891,6 +2948,10 @@ av_cold void ff_dsputil_init(DSPContext* c, AVCodecContext *avctx)
     c->try_8x8basis= try_8x8basis_c;
     c->add_8x8basis= add_8x8basis_c;
 
+    c->vector_q31mul_reverse = vector_q31mul_reverse_c;
+    c->vector_imul_add = vector_imul_add_c;
+    c->vector_q31mul = vector_q31mul_c;
+    c->vector_q31mul_window = vector_q31mul_window_c;
     c->vector_clipf = vector_clipf_c;
     c->scalarproduct_int16 = scalarproduct_int16_c;
     c->scalarproduct_and_madd_int16 = scalarproduct_and_madd_int16_c;

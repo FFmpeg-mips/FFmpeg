@@ -153,4 +153,7 @@ void avpriv_fixed_dsp_init(AVFixedDSPContext *fdsp, int bit_exact)
     fdsp->vector_fmul_fixed = vector_fmul_fixed_c;
     fdsp->butterflies_fixed = butterflies_fixed_c;
     fdsp->scalarproduct_fixed = ff_scalarproduct_fixed_c;
+#if ARCH_MIPS
+    ff_fixed_dsp_init_mips(fdsp);
+#endif
 }

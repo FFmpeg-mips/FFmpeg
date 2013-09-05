@@ -208,6 +208,13 @@ typedef struct DSPContext {
     void (*h263_v_loop_filter)(uint8_t *src, int stride, int qscale);
     void (*h263_h_loop_filter)(uint8_t *src, int stride, int qscale);
 
+    /* assume len is a multiple of 16, and arrays are 32-byte aligned */
+    void (*vector_q31mul_reverse)(int *dst, const int *src0, const int *src1, int len);
+    /* assume len is a multiple of 8, and src arrays are 16-byte aligned */
+    void (*vector_imul_add)(int *dst, const int *src0, const int *src1, const int *src2, int len);
+    /* assume len is a multiple of 4, and arrays are 16-byte aligned */
+    void (*vector_q31mul_window)(int *dst, const int *src0, const int *src1, const int *win, int len);
+    void (*vector_q31mul)(int *dst, const int *src0, const int *src1, int len);
     /**
      * Calculate the scalar product of two vectors of floats.
      * @param v1  first vector, 16-byte aligned

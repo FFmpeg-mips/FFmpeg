@@ -2717,9 +2717,12 @@ static void aacdec_init(AACContext *c)
     c->subband_scale                            = subband_scale;
 #endif
 
-#if HAVE_MIPSFPU
-    ff_aacdec_init_mips(c);
-#endif
+    if(ARCH_MIPS)
+#if CONFIG_AAC_FIXED
+        ff_aacdec_fixed_init_mips(c);
+#else
+        ff_aacdec_float_init_mips(c);
+#endif /* CONFIG_AAC_FIXED */
 }
 
 /**

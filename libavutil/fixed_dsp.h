@@ -154,6 +154,8 @@ typedef struct AVFixedDSPContext {
  */
 void avpriv_fixed_dsp_init(AVFixedDSPContext *fdsp, int strict);
 
+void ff_fixed_dsp_init_mips(AVFixedDSPContext *fdsp);
+
 static av_always_inline int fixed_sqrt(int x, int bits)
 {
     int retval, bit_mask, guess, square, i;

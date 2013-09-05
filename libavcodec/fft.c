@@ -168,13 +168,16 @@ av_cold int ff_fft_init(FFTContext *s, int nbits, int inverse)
         int n=0;
         ff_fft_lut_init(fft_offsets_lut, 0, 1 << 16, &n);
     }
+    if (ARCH_MIPS)
+        if (HAVE_MIPSDSPR2 || HAVE_MIPSDSPR1 || HAVE_MIPS32R2)
+            ff_fft_init_fixed32_mips(s);
 #else /* CONFIG_FFT_FIXED_32 */
 #if CONFIG_FFT_FLOAT
     if (ARCH_ARM)     ff_fft_init_arm(s);
     if (ARCH_PPC)     ff_fft_init_ppc(s);
     if (ARCH_X86)     ff_fft_init_x86(s);
     if (CONFIG_MDCT)  s->mdct_calcw = s->mdct_calc;
-    if (HAVE_MIPSFPU) ff_fft_init_mips(s);
+    if (HAVE_MIPSFPU) ff_fft_init_float_mips(s);
 #else
     if (CONFIG_MDCT)  s->mdct_calcw = ff_mdct_calcw_c;
     if (ARCH_ARM)     ff_fft_fixed_init_arm(s);

@@ -392,6 +392,7 @@ struct AACContext {
 };
 
 extern int exp2tab[4];
-void ff_aacdec_init_mips(AACContext *c);
+void ff_aacdec_float_init_mips(AACContext *c);
+void ff_aacdec_fixed_init_mips(AACContext *c);
 
 #endif /* AVCODEC_AAC_H */

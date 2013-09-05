@@ -26,9 +26,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * Authors:  Darko Laus      (darko@mips.com)
- *           Djordje Pesut   (djordje@mips.com)
- *           Mirjana Vulin   (mvulin@mips.com)
+ * Authors:  Darko Laus      (darko.laus imgtec com)
+ *           Djordje Pesut   (djordje.pesut imgtec com)
+ *           Mirjana Vulin   (mirjana.vulin imgtec com)
  *
  * This file is part of FFmpeg.
  *
@@ -442,6 +442,604 @@ static void ps_stereo_interpolate_mips(float (*l)[2], float (*r)[2],
     );
 }
 #endif /* HAVE_MIPSFPU */
+#if HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2
+static void ps_decorrelate_fixed_mips(int (*out)[2], int (*delay)[2],
+                             int (*ap_delay)[PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY][2],
+                             const int phi_fract[2], int (*Q_fract)[2],
+                             const int *transient_gain,
+                             int g_decay_slope,
+                             int len)
+{
+    static const int a0 = 1398954724, a1 = 1212722933, a2 = 1051282709;
+    int ag0, ag1, ag2;
+    int Qfrac00, Qfrac01, Qfrac10, Qfrac11, Qfrac20, Qfrac21;
+    int n;
+
+    int m1, m2, m3, m4;
+    int phi_fract0, phi_fract1;
+    int t_re1, t_re2;
+    int t_im1, t_im2;
+    int a_re, a_im;
+    int *delay_ptr, *ap_delayr_ptr, *ap_delays_ptr, *Q_fract_ptr, *tg_ptr, *out_ptr;
+
+    delay_ptr = (int *)&delay[0][0];
+    ap_delayr_ptr = (int *)&ap_delay[0][2][0];
+    ap_delays_ptr = (int *)&ap_delay[0][5][0];
+    Q_fract_ptr = (int *)&Q_fract[0][0];
+    tg_ptr = (int *)&transient_gain[0];
+    out_ptr = (int *)&out[0][0];
+
+    __asm__ volatile (
+        "lw             %[phi_fract0],  0(%[phi_fract])             \n\t"
+        "lw             %[phi_fract1],  4(%[phi_fract])             \n\t"
+        "mult           $ac0,           %[g_decay_slope],   %[a0]   \n\t"
+        "mult           $ac1,           %[g_decay_slope],   %[a1]   \n\t"
+        "mult           $ac2,           %[g_decay_slope],   %[a2]   \n\t"
+        "lw             %[Qfrac00],     0(%[Q_fract_ptr])           \n\t"
+        "lw             %[Qfrac01],     4(%[Q_fract_ptr])           \n\t"
+        "lw             %[Qfrac10],     8(%[Q_fract_ptr])           \n\t"
+        "lw             %[Qfrac11],     12(%[Q_fract_ptr])          \n\t"
+        "lw             %[Qfrac20],     16(%[Q_fract_ptr])          \n\t"
+        "lw             %[Qfrac21],     20(%[Q_fract_ptr])          \n\t"
+        "extr_r.w       %[ag0],         $ac0,               30      \n\t"
+        "extr_r.w       %[ag1],         $ac1,               30      \n\t"
+        "extr_r.w       %[ag2],         $ac2,               30      \n\t"
+
+        : [ag0] "=r" (ag0), [ag1] "=r" (ag1), [ag2] "=r" (ag2),
+          [Qfrac00] "=&r" (Qfrac00), [Qfrac01] "=&r" (Qfrac01),
+          [Qfrac10] "=&r" (Qfrac10), [Qfrac11] "=&r" (Qfrac11),
+          [Qfrac20] "=&r" (Qfrac20), [Qfrac21] "=r" (Qfrac21),
+          [phi_fract1] "=&r" (phi_fract1), [phi_fract0] "=&r" (phi_fract0)
+        : [a0] "r" (a0), [a1] "r" (a1), [a2] "r" (a2),
+          [Q_fract_ptr] "r" (Q_fract_ptr), [g_decay_slope] "r" (g_decay_slope),
+          [phi_fract] "r" (phi_fract)
+        : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+          "$ac2hi", "$ac2lo"
+    );
+
+    for (n = 0; n < len; n+=2) {
+        __asm__ volatile (
+            "lw             %[m1],      0(%[delay_ptr])         \n\t"
+            "lw             %[m2],      4(%[delay_ptr])         \n\t"
+            "mult           $ac0,       %[phi_fract0],  %[m1]   \n\t"
+            "mult           $ac1,       %[phi_fract1],  %[m1]   \n\t"
+            "msub           $ac0,       %[phi_fract1],  %[m2]   \n\t"
+            "madd           $ac1,       %[phi_fract0],  %[m2]   \n\t"
+            "lw             %[m3],      0(%[ap_delayr_ptr])     \n\t"
+            "lw             %[m4],      4(%[ap_delayr_ptr])     \n\t"
+            "extr_r.w       %[t_re1],   $ac0,           30      \n\t"
+            "extr_r.w       %[t_im1],   $ac1,           30      \n\t"
+            "mult           $ac2,       %[t_re1],       %[ag0]  \n\t"
+            "mult           $ac3,       %[t_im1],       %[ag0]  \n\t"
+            "extr_r.w       %[a_re],    $ac2,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac3,           31      \n\t"
+            "mult           $ac0,       %[Qfrac00],     %[m3]   \n\t"
+            "mult           $ac1,       %[Qfrac01],     %[m3]   \n\t"
+            "msub           $ac0,       %[Qfrac01],     %[m4]   \n\t"
+            "madd           $ac1,       %[Qfrac00],     %[m4]   \n\t"
+            "extr_r.w       %[m1],      $ac0,           30      \n\t"
+            "extr_r.w       %[m2],      $ac1,           30      \n\t"
+            "subu           %[t_re2],   %[m1],          %[a_re] \n\t"
+            "subu           %[t_im2],   %[m2],          %[a_im] \n\t"
+            "mult           $ac2,       %[t_re2],       %[ag0]  \n\t"
+            "mult           $ac3,       %[t_im2],       %[ag0]  \n\t"
+            "extr_r.w       %[m3],      $ac2,           31      \n\t"
+            "extr_r.w       %[m4],      $ac3,           31      \n\t"
+            "addu           %[m3],      %[t_re1],      %[m3]    \n\t"
+            "addu           %[m4],      %[t_im1],      %[m4]    \n\t"
+            "lw             %[m1],      288(%[ap_delayr_ptr])   \n\t"
+            "lw             %[m2],      292(%[ap_delayr_ptr])   \n\t"
+            "sw             %[m3],      0(%[ap_delays_ptr])     \n\t"
+            "sw             %[m4],      4(%[ap_delays_ptr])     \n\t"
+            "mult           $ac0,       %[t_re2],       %[ag1]  \n\t"
+            "mult           $ac1,       %[t_im2],       %[ag1]  \n\t"
+            "extr_r.w       %[a_re],    $ac0,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac1,           31      \n\t"
+            "mult           $ac2,       %[Qfrac10],     %[m1]   \n\t"
+            "mult           $ac3,       %[Qfrac11],     %[m1]   \n\t"
+            "msub           $ac2,       %[Qfrac11],     %[m2]   \n\t"
+            "madd           $ac3,       %[Qfrac10],     %[m2]   \n\t"
+            "extr_r.w       %[m3],      $ac2,           30      \n\t"
+            "extr_r.w       %[m4],      $ac3,           30      \n\t"
+            "subu           %[t_re1],   %[m3],          %[a_re] \n\t"
+            "subu           %[t_im1],   %[m4],          %[a_im] \n\t"
+            "mult           $ac0,       %[t_re1],       %[ag1]  \n\t"
+            "mult           $ac1,       %[t_im1],       %[ag1]  \n\t"
+            "extr_r.w       %[m1],      $ac0,           31      \n\t"
+            "extr_r.w       %[m2],      $ac1,           31      \n\t"
+            "addu           %[m1],      %[t_re2],      %[m1]    \n\t"
+            "addu           %[m2],      %[t_im2],      %[m2]    \n\t"
+            "lw             %[m3],      576(%[ap_delayr_ptr])   \n\t"
+            "lw             %[m4],      580(%[ap_delayr_ptr])   \n\t"
+            "sw             %[m1],      296(%[ap_delays_ptr])   \n\t"
+            "sw             %[m2],      300(%[ap_delays_ptr])   \n\t"
+            "mult           $ac2,       %[t_re1],       %[ag2]  \n\t"
+            "mult           $ac3,       %[t_im1],       %[ag2]  \n\t"
+            "extr_r.w       %[a_re],    $ac2,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac3,           31      \n\t"
+            "mult           $ac0,       %[Qfrac20],     %[m3]   \n\t"
+            "mult           $ac1,       %[Qfrac21],     %[m3]   \n\t"
+            "msub           $ac0,       %[Qfrac21],     %[m4]   \n\t"
+            "madd           $ac1,       %[Qfrac20],     %[m4]   \n\t"
+            "extr_r.w       %[m1],      $ac0,           30      \n\t"
+            "extr_r.w       %[m2],      $ac1,           30      \n\t"
+            "subu           %[t_re2],   %[m1],          %[a_re] \n\t"
+            "subu           %[t_im2],   %[m2],          %[a_im] \n\t"
+
+            : [a_re] "=&r" (a_re), [t_im1] "=&r" (t_im1), [t_re1] "=&r" (t_re1),
+              [a_im] "=&r" (a_im), [t_im2] "=&r" (t_im2), [t_re2] "=&r" (t_re2),
+              [m1] "=&r" (m1), [m2] "=&r" (m2), [m3] "=&r" (m3), [m4] "=&r" (m4)
+            : [phi_fract0] "r" (phi_fract0), [phi_fract1] "r" (phi_fract1),
+              [ap_delayr_ptr] "r" (ap_delayr_ptr), [delay_ptr] "r" (delay_ptr),
+              [ag0] "r" (ag0), [Qfrac00] "r" (Qfrac00), [Qfrac01] "r" (Qfrac01),
+              [ag1] "r" (ag1), [ap_delays_ptr] "r" (ap_delays_ptr),
+              [ag2] "r" (ag2), [Qfrac10] "r" (Qfrac10), [Qfrac11] "r" (Qfrac11),
+              [Qfrac20] "r" (Qfrac20), [Qfrac21] "r" (Qfrac21)
+            : "memory", "hi", "lo", "$ac1hi", "$ac1lo", "$ac2hi",
+              "$ac2lo", "$ac3hi", "$ac3lo"
+        );
+
+        __asm__ volatile (
+            "mult       $ac0,              %[t_re2],           %[ag2]  \n\t"
+            "mult       $ac1,              %[t_im2],           %[ag2]  \n\t"
+            "extr_r.w   %[m3],             $ac0,               31      \n\t"
+            "extr_r.w   %[m4],             $ac1,               31      \n\t"
+            "addu       %[m3],             %[t_re1],           %[m3]   \n\t"
+            "addu       %[m4],             %[t_im1],           %[m4]   \n\t"
+            "lw         %[m1],             0(%[tg_ptr])                \n\t"
+            "sw         %[m3],             592(%[ap_delays_ptr])       \n\t"
+            "sw         %[m4],             596(%[ap_delays_ptr])       \n\t"
+            "mult       $ac0,              %[t_re2],           %[m1]   \n\t"
+            "mult       $ac1,              %[t_im2],           %[m1]   \n\t"
+            "extr_r.w   %[m3],             $ac0,               16      \n\t"
+            "extr_r.w   %[m4],             $ac1,               16      \n\t"
+            "sw         %[m3],             0(%[out_ptr])               \n\t"
+            "sw         %[m4],             4(%[out_ptr])               \n\t"
+            "addiu      %[ap_delayr_ptr],  %[ap_delayr_ptr],   8       \n\t"
+            "addiu      %[ap_delays_ptr],  %[ap_delays_ptr],   8       \n\t"
+            "addiu      %[delay_ptr],      %[delay_ptr],       8       \n\t"
+            "addiu      %[tg_ptr],         %[tg_ptr],          4       \n\t"
+            "addiu      %[out_ptr],        %[out_ptr],         8       \n\t"
+
+            : [out_ptr] "+r" (out_ptr), [delay_ptr] "+r" (delay_ptr),
+              [ap_delayr_ptr] "+r" (ap_delayr_ptr), [tg_ptr] "+r" (tg_ptr),
+              [ap_delays_ptr] "+r" (ap_delays_ptr),
+              [m1] "=&r" (m1), [m3] "=&r" (m3), [m4] "=&r" (m4)
+            : [t_im2] "r" (t_im2), [t_re2] "r" (t_re2),
+              [t_im1] "r" (t_im1), [t_re1] "r" (t_re1),
+              [ag2] "r" (ag2)
+            : "memory", "hi", "lo", "$ac1hi", "$ac1lo"
+        );
+
+        __asm__ volatile (
+            "lw             %[m1],      0(%[delay_ptr])         \n\t"
+            "lw             %[m2],      4(%[delay_ptr])         \n\t"
+            "mult           $ac0,       %[phi_fract0],  %[m1]   \n\t"
+            "mult           $ac1,       %[phi_fract1],  %[m1]   \n\t"
+            "msub           $ac0,       %[phi_fract1],  %[m2]   \n\t"
+            "madd           $ac1,       %[phi_fract0],  %[m2]   \n\t"
+            "lw             %[m3],      0(%[ap_delayr_ptr])     \n\t"
+            "lw             %[m4],      4(%[ap_delayr_ptr])     \n\t"
+            "extr_r.w       %[t_re1],   $ac0,           30      \n\t"
+            "extr_r.w       %[t_im1],   $ac1,           30      \n\t"
+            "mult           $ac2,       %[t_re1],       %[ag0]  \n\t"
+            "mult           $ac3,       %[t_im1],       %[ag0]  \n\t"
+            "extr_r.w       %[a_re],    $ac2,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac3,           31      \n\t"
+            "mult           $ac0,       %[Qfrac00],     %[m3]   \n\t"
+            "mult           $ac1,       %[Qfrac01],     %[m3]   \n\t"
+            "msub           $ac0,       %[Qfrac01],     %[m4]   \n\t"
+            "madd           $ac1,       %[Qfrac00],     %[m4]   \n\t"
+            "extr_r.w       %[m1],      $ac0,           30      \n\t"
+            "extr_r.w       %[m2],      $ac1,           30      \n\t"
+            "subu           %[t_re2],   %[m1],          %[a_re] \n\t"
+            "subu           %[t_im2],   %[m2],          %[a_im] \n\t"
+            "mult           $ac2,       %[t_re2],       %[ag0]  \n\t"
+            "mult           $ac3,       %[t_im2],       %[ag0]  \n\t"
+            "extr_r.w       %[m3],      $ac2,           31      \n\t"
+            "extr_r.w       %[m4],      $ac3,           31      \n\t"
+            "addu           %[m3],      %[t_re1],       %[m3]   \n\t"
+            "addu           %[m4],      %[t_im1],       %[m4]   \n\t"
+            "lw             %[m1],      288(%[ap_delayr_ptr])   \n\t"
+            "lw             %[m2],      292(%[ap_delayr_ptr])   \n\t"
+            "sw             %[m3],      0(%[ap_delays_ptr])     \n\t"
+            "sw             %[m4],      4(%[ap_delays_ptr])     \n\t"
+            "mult           $ac0,       %[t_re2],       %[ag1]  \n\t"
+            "mult           $ac1,       %[t_im2],       %[ag1]  \n\t"
+            "extr_r.w       %[a_re],    $ac0,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac1,           31      \n\t"
+            "mult           $ac2,       %[Qfrac10],     %[m1]   \n\t"
+            "mult           $ac3,       %[Qfrac11],     %[m1]   \n\t"
+            "msub           $ac2,       %[Qfrac11],     %[m2]   \n\t"
+            "madd           $ac3,       %[Qfrac10],     %[m2]   \n\t"
+            "extr_r.w       %[m3],      $ac2,           30      \n\t"
+            "extr_r.w       %[m4],      $ac3,           30      \n\t"
+            "subu           %[t_re1],   %[m3],          %[a_re] \n\t"
+            "subu           %[t_im1],   %[m4],          %[a_im] \n\t"
+            "mult           $ac0,       %[t_re1],       %[ag1]  \n\t"
+            "mult           $ac1,       %[t_im1],       %[ag1]  \n\t"
+            "extr_r.w       %[m1],      $ac0,           31      \n\t"
+            "extr_r.w       %[m2],      $ac1,           31      \n\t"
+            "addu           %[m1],      %[t_re2],      %[m1]    \n\t"
+            "addu           %[m2],      %[t_im2],      %[m2]    \n\t"
+            "lw             %[m3],      576(%[ap_delayr_ptr])   \n\t"
+            "lw             %[m4],      580(%[ap_delayr_ptr])   \n\t"
+            "sw             %[m1],      296(%[ap_delays_ptr])   \n\t"
+            "sw             %[m2],      300(%[ap_delays_ptr])   \n\t"
+            "mult           $ac2,       %[t_re1],       %[ag2]  \n\t"
+            "mult           $ac3,       %[t_im1],       %[ag2]  \n\t"
+            "extr_r.w       %[a_re],    $ac2,           31      \n\t"
+            "extr_r.w       %[a_im],    $ac3,           31      \n\t"
+            "mult           $ac0,       %[Qfrac20],     %[m3]   \n\t"
+            "mult           $ac1,       %[Qfrac21],     %[m3]   \n\t"
+            "msub           $ac0,       %[Qfrac21],     %[m4]   \n\t"
+            "madd           $ac1,       %[Qfrac20],     %[m4]   \n\t"
+            "extr_r.w       %[m1],      $ac0,           30      \n\t"
+            "extr_r.w       %[m2],      $ac1,           30      \n\t"
+            "subu           %[t_re2],   %[m1],          %[a_re] \n\t"
+            "subu           %[t_im2],   %[m2],          %[a_im] \n\t"
+
+            : [a_re] "=&r" (a_re), [t_im1] "=&r" (t_im1), [t_re1] "=&r" (t_re1),
+              [a_im] "=&r" (a_im), [t_im2] "=&r" (t_im2), [t_re2] "=&r" (t_re2),
+              [m1] "=&r" (m1), [m2] "=&r" (m2), [m3] "=&r" (m3), [m4] "=&r" (m4)
+            : [phi_fract0] "r" (phi_fract0), [phi_fract1] "r" (phi_fract1),
+              [ap_delayr_ptr] "r" (ap_delayr_ptr), [delay_ptr] "r" (delay_ptr),
+              [ag0] "r" (ag0), [Qfrac00] "r" (Qfrac00), [Qfrac01] "r" (Qfrac01),
+              [ag1] "r" (ag1), [ap_delays_ptr] "r" (ap_delays_ptr),
+              [ag2] "r" (ag2), [Qfrac10] "r" (Qfrac10), [Qfrac11] "r" (Qfrac11),
+              [Qfrac20] "r" (Qfrac20), [Qfrac21] "r" (Qfrac21)
+            : "memory", "hi", "lo", "$ac1hi", "$ac1lo",
+              "$ac2hi", "$ac2lo", "$ac3hi", "$ac3lo"
+        );
+
+        __asm__ volatile (
+            "mult       $ac0,             %[t_re2],          %[ag2]  \n\t"
+            "mult       $ac1,             %[t_im2],          %[ag2]  \n\t"
+            "extr_r.w   %[m3],            $ac0,              31      \n\t"
+            "extr_r.w   %[m4],            $ac1,              31      \n\t"
+            "addu       %[m3],            %[t_re1],          %[m3]   \n\t"
+            "addu       %[m4],            %[t_im1],          %[m4]   \n\t"
+            "lw         %[m1],            0(%[tg_ptr])               \n\t"
+            "sw         %[m3],            592(%[ap_delays_ptr])      \n\t"
+            "sw         %[m4],            596(%[ap_delays_ptr])      \n\t"
+            "mult       $ac0,             %[t_re2],          %[m1]   \n\t"
+            "mult       $ac1,             %[t_im2],          %[m1]   \n\t"
+            "extr_r.w   %[m3],            $ac0,              16      \n\t"
+            "extr_r.w   %[m4],            $ac1,              16      \n\t"
+            "sw         %[m3],            0(%[out_ptr])              \n\t"
+            "sw         %[m4],            4(%[out_ptr])              \n\t"
+            "addiu      %[ap_delayr_ptr], %[ap_delayr_ptr],  8       \n\t"
+            "addiu      %[ap_delays_ptr], %[ap_delays_ptr],  8       \n\t"
+            "addiu      %[delay_ptr],     %[delay_ptr],      8       \n\t"
+            "addiu      %[tg_ptr],        %[tg_ptr],         4       \n\t"
+            "addiu      %[out_ptr],       %[out_ptr],        8       \n\t"
+
+            : [out_ptr] "+r" (out_ptr), [delay_ptr] "+r" (delay_ptr),
+              [ap_delayr_ptr] "+r" (ap_delayr_ptr), [tg_ptr] "+r" (tg_ptr),
+              [ap_delays_ptr] "+r" (ap_delays_ptr),
+              [m1] "=&r" (m1), [m3] "=&r" (m3), [m4] "=&r" (m4)
+            : [t_im2] "r" (t_im2), [t_re2] "r" (t_re2),
+              [t_im1] "r" (t_im1), [t_re1] "r" (t_re1),
+              [ag2] "r" (ag2)
+            : "memory", "hi", "lo", "$ac1hi", "$ac1lo"
+        );
+    }
+}
+#else
+#if HAVE_MIPS32R2
+static void ps_decorrelate_fixed_mips(int (*out)[2], int (*delay)[2],
+                             int (*ap_delay)[PS_QMF_TIME_SLOTS + PS_MAX_AP_DELAY][2],
+                             const int phi_fract[2], int (*Q_fract)[2],
+                             const int *transient_gain,
+                             int g_decay_slope,
+                             int len)
+{
+    static const int a0 = 0xA6C4B5C8, a1 = 0x90915DEA, a2 = 0x7D529A2A;
+    int ag0, ag1, ag2;
+    int Qfrac00, Qfrac01, Qfrac10, Qfrac11, Qfrac20, Qfrac21;
+    int n;
+
+    int m1, m2;
+    int phi_fract0, phi_fract1;
+    int t_re1, t_re2;
+    int t_im1, t_im2;
+    int a_re, a_im;
+    int *delay_ptr, *ap_delayr_ptr, *ap_delays_ptr, *Q_fract_ptr, *tg_ptr, *out_ptr;
+
+    int c0 = 0x80000000;
+    int c1 = 0x40000000;
+    int c2 = 0x20000000;
+    int c3 = 0x8000;
+
+    delay_ptr = (int *)&delay[0][0];
+    ap_delayr_ptr = (int *)&ap_delay[0][2][0];
+    ap_delays_ptr = (int *)&ap_delay[0][5][0];
+    Q_fract_ptr = (int *)&Q_fract[0][0];
+    tg_ptr = (int *)&transient_gain[0];
+    out_ptr = (int *)&out[0][0];
+
+    __asm__ volatile (
+        "mthi       $0                                              \n\t"
+        "sll        %[m1],              %[g_decay_slope],   1       \n\t"
+        "mtlo       %[c0]                                           \n\t"
+        "maddu      %[a0],              %[m1]                       \n\t"
+        "lw         %[phi_fract0],      0(%[phi_fract])             \n\t"
+        "lw         %[phi_fract1],      4(%[phi_fract])             \n\t"
+        "mfhi       %[ag0]                                          \n\t"
+        "mthi       $0                                              \n\t"
+        "mtlo       %[c0]                                           \n\t"
+        "maddu      %[a1],              %[m1]                       \n\t"
+        "lw         %[Qfrac00],         0(%[Q_fract_ptr])           \n\t"
+        "lw         %[Qfrac01],         4(%[Q_fract_ptr])           \n\t"
+        "lw         %[Qfrac10],         8(%[Q_fract_ptr])           \n\t"
+        "mfhi       %[ag1]                                          \n\t"
+        "mthi       $0                                              \n\t"
+        "mtlo       %[c0]                                           \n\t"
+        "maddu      %[a2],              %[m1]                       \n\t"
+        "lw         %[Qfrac11],         12(%[Q_fract_ptr])          \n\t"
+        "lw         %[Qfrac20],         16(%[Q_fract_ptr])          \n\t"
+        "lw         %[Qfrac21],         20(%[Q_fract_ptr])          \n\t"
+        "mfhi       %[ag2]                                          \n\t"
+
+        : [m1] "=&r" (m1), [ag0] "=&r" (ag0), [ag1] "=&r" (ag1), [ag2] "=r" (ag2),
+          [Qfrac00] "=&r" (Qfrac00), [Qfrac01] "=&r" (Qfrac01),
+          [Qfrac10] "=&r" (Qfrac10), [Qfrac11] "=&r" (Qfrac11),
+          [Qfrac20] "=&r" (Qfrac20), [Qfrac21] "=&r" (Qfrac21),
+          [phi_fract1] "=&r" (phi_fract1), [phi_fract0] "=&r" (phi_fract0)
+        : [g_decay_slope] "r" (g_decay_slope), [a0] "r" (a0), [a1] "r" (a1),
+          [a2] "r" (a2), [Q_fract_ptr] "r" (Q_fract_ptr), [c0] "r" (c0),
+          [phi_fract] "r" (phi_fract)
+        : "memory", "hi", "lo"
+    );
+
+    for (n = 0; n < len; n++) {
+        __asm__ volatile (
+            "lw         %[m1],      0(%[delay_ptr])             \n\t"
+            "lw         %[m2],      4(%[delay_ptr])             \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[phi_fract0]               \n\t"
+            "msub       %[m2],      %[phi_fract1]               \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       2           \n\t"
+            "srl        %[t_im2],   %[t_im2],       30          \n\t"
+            "or         %[t_re1],   %[t_re2],       %[t_im2]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[phi_fract1]               \n\t"
+            "madd       %[m2],      %[phi_fract0]               \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       2           \n\t"
+            "srl        %[t_im2],   %[t_im2],       30          \n\t"
+            "or         %[t_im1],   %[t_re2],       %[t_im2]    \n\t"
+            "lw         %[m1],      0(%[ap_delayr_ptr])         \n\t"
+            "lw         %[m2],      4(%[ap_delayr_ptr])         \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_re1],   %[ag0]                      \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       1           \n\t"
+            "srl        %[t_im2],   %[t_im2],       31          \n\t"
+            "or         %[a_re],    %[t_re2],       %[t_im2]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_im1],   %[ag0]                      \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       1           \n\t"
+            "srl        %[t_im2],   %[t_im2],       31          \n\t"
+            "or         %[a_im],    %[t_re2],       %[t_im2]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac00]                  \n\t"
+            "msub       %[m2],      %[Qfrac01]                  \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       2           \n\t"
+            "srl        %[t_im2],   %[t_im2],       30          \n\t"
+            "or         %[t_re2],   %[t_re2],       %[t_im2]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac01]                  \n\t"
+            "madd       %[m2],      %[Qfrac00]                  \n\t"
+            "mfhi       %[m1]                                   \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[m1],      %[m1],          2           \n\t"
+            "srl        %[m2],      %[m2],          30          \n\t"
+            "or         %[t_im2],   %[m1],          %[m2]       \n\t"
+            "subu       %[t_re2],   %[t_re2],       %[a_re]     \n\t"
+            "subu       %[t_im2],   %[t_im2],       %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_re2],   %[ag0]                      \n\t"
+            "mfhi       %[m1]                                   \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[m1],      %[m1],          1           \n\t"
+            "srl        %[m2],      %[m2],          31          \n\t"
+            "or         %[m1],      %[m1],          %[m2]       \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_im2],   %[ag0]                      \n\t"
+            "mfhi       %[a_re]                                 \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[a_re],    %[a_re],        1           \n\t"
+            "srl        %[m2],      %[m2],          31          \n\t"
+            "or         %[m2],      %[a_re],        %[m2]       \n\t"
+            "addu       %[m1],      %[t_re1],       %[m1]       \n\t"
+            "addu       %[m2],      %[t_im1],       %[m2]       \n\t"
+            "sw         %[m1],      0(%[ap_delays_ptr])         \n\t"
+            "sw         %[m2],      4(%[ap_delays_ptr])         \n\t"
+            "lw         %[m1],      288(%[ap_delayr_ptr])       \n\t"
+            "lw         %[m2],      292(%[ap_delayr_ptr])       \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_re2],   %[ag1]                      \n\t"
+            "mfhi       %[a_re]                                 \n\t"
+            "mflo       %[a_im]                                 \n\t"
+            "sll        %[a_re],    %[a_re],        1           \n\t"
+            "srl        %[a_im],    %[a_im],        31          \n\t"
+            "or         %[a_re],    %[a_re],        %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_im2],   %[ag1]                      \n\t"
+            "mfhi       %[t_re1]                                \n\t"
+            "mflo       %[a_im]                                 \n\t"
+            "sll        %[t_re1],   %[t_re1],       1           \n\t"
+            "srl        %[a_im],    %[a_im],        31          \n\t"
+            "or         %[a_im],    %[t_re1],       %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac10]                  \n\t"
+            "msub       %[m2],      %[Qfrac11]                  \n\t"
+            "mfhi       %[t_re1]                                \n\t"
+            "mflo       %[t_im1]                                \n\t"
+            "sll        %[t_re1],   %[t_re1],       2           \n\t"
+            "srl        %[t_im1],   %[t_im1],       30          \n\t"
+            "or         %[t_re1],   %[t_re1],       %[t_im1]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac11]                  \n\t"
+            "madd       %[m2],      %[Qfrac10]                  \n\t"
+            "mfhi       %[m1]                                   \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[m1],      %[m1],          2           \n\t"
+            "srl        %[m2],      %[m2],          30          \n\t"
+            "or         %[t_im1],   %[m1],          %[m2]       \n\t"
+            "subu       %[t_re1],   %[t_re1],       %[a_re]     \n\t"
+            "subu       %[t_im1],   %[t_im1],       %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_re1],   %[ag1]                      \n\t"
+            "mfhi       %[m1]                                   \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[m1],      %[m1],          1           \n\t"
+            "srl        %[m2],      %[m2],          31          \n\t"
+            "or         %[m1],      %[m1],          %[m2]       \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_im1],   %[ag1]                      \n\t"
+            "mfhi       %[a_re]                                 \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[a_re],    %[a_re],        1           \n\t"
+            "srl        %[m2],      %[m2],          31          \n\t"
+            "or         %[m2],      %[a_re],        %[m2]       \n\t"
+            "addu       %[m1],      %[t_re2],       %[m1]       \n\t"
+            "addu       %[m2],      %[t_im2],       %[m2]       \n\t"
+            "sw         %[m1],      296(%[ap_delays_ptr])       \n\t"
+            "sw         %[m2],      300(%[ap_delays_ptr])       \n\t"
+            "lw         %[m1],      576(%[ap_delayr_ptr])       \n\t"
+            "lw         %[m2],      580(%[ap_delayr_ptr])       \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_re1],   %[ag2]                      \n\t"
+            "mfhi       %[a_re]                                 \n\t"
+            "mflo       %[a_im]                                 \n\t"
+            "sll        %[a_re],    %[a_re],        1           \n\t"
+            "srl        %[a_im],    %[a_im],        31          \n\t"
+            "or         %[a_re],    %[a_re],        %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c1]                                   \n\t"
+            "madd       %[t_im1],   %[ag2]                      \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[a_im]                                 \n\t"
+            "sll        %[t_re2],   %[t_re2],       1           \n\t"
+            "srl        %[a_im],    %[a_im],        31          \n\t"
+            "or         %[a_im],    %[t_re2],       %[a_im]     \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac20]                  \n\t"
+            "msub       %[m2],      %[Qfrac21]                  \n\t"
+            "mfhi       %[t_re2]                                \n\t"
+            "mflo       %[t_im2]                                \n\t"
+            "sll        %[t_re2],   %[t_re2],       2           \n\t"
+            "srl        %[t_im2],   %[t_im2],       30          \n\t"
+            "or         %[t_re2],   %[t_re2],       %[t_im2]    \n\t"
+            "mthi       $0                                      \n\t"
+            "mtlo       %[c2]                                   \n\t"
+            "madd       %[m1],      %[Qfrac21]                  \n\t"
+            "madd       %[m2],      %[Qfrac20]                  \n\t"
+            "mfhi       %[m1]                                   \n\t"
+            "mflo       %[m2]                                   \n\t"
+            "sll        %[m1],      %[m1],          2           \n\t"
+            "srl        %[m2],      %[m2],          30          \n\t"
+            "or         %[t_im2],   %[m1],          %[m2]       \n\t"
+            "subu       %[t_re2],   %[t_re2],       %[a_re]     \n\t"
+            "subu       %[t_im2],   %[t_im2],       %[a_im]     \n\t"
+
+            : [a_re] "=&r" (a_re), [t_im1] "=&r" (t_im1), [t_re1] "=&r" (t_re1),
+              [a_im] "=&r" (a_im), [t_im2] "=&r" (t_im2), [t_re2] "=&r" (t_re2),
+              [m1] "=&r" (m1), [m2] "=&r" (m2)
+            : [phi_fract0] "r" (phi_fract0), [phi_fract1] "r" (phi_fract1),
+              [ap_delayr_ptr] "r" (ap_delayr_ptr), [delay_ptr] "r" (delay_ptr),
+              [ag0] "r" (ag0), [Qfrac00] "r" (Qfrac00), [Qfrac01] "r" (Qfrac01),
+              [ag1] "r" (ag1), [ap_delays_ptr] "r" (ap_delays_ptr), [c2] "r" (c2),
+              [ag2] "r" (ag2), [Qfrac10] "r" (Qfrac10), [Qfrac11] "r" (Qfrac11),
+              [Qfrac20] "r" (Qfrac20), [Qfrac21] "r" (Qfrac21), [c1] "r" (c1)
+            : "memory", "hi", "lo"
+        );
+
+        __asm__ volatile (
+            "mthi       $0                                                 \n\t"
+            "mtlo       %[c1]                                              \n\t"
+            "madd       %[t_re2],           %[ag2]                         \n\t"
+            "mfhi       %[m1]                                              \n\t"
+            "mflo       %[m2]                                              \n\t"
+            "sll        %[m1],              %[m1],              1          \n\t"
+            "srl        %[m2],              %[m2],              31         \n\t"
+            "or         %[m1],              %[m1],              %[m2]      \n\t"
+            "mthi       $0                                                 \n\t"
+            "mtlo       %[c1]                                              \n\t"
+            "madd       %[t_im2],           %[ag2]                         \n\t"
+            "mfhi       %[a_re]                                            \n\t"
+            "mflo       %[m2]                                              \n\t"
+            "sll        %[a_re],            %[a_re],            1          \n\t"
+            "srl        %[m2],              %[m2],              31         \n\t"
+            "or         %[m2],              %[a_re],            %[m2]      \n\t"
+            "addu       %[m1],              %[t_re1],           %[m1]      \n\t"
+            "addu       %[m2],              %[t_im1],           %[m2]      \n\t"
+            "sw         %[m1],              592(%[ap_delays_ptr])          \n\t"
+            "sw         %[m2],              596(%[ap_delays_ptr])          \n\t"
+            "lw         %[m1],              0(%[tg_ptr])                   \n\t"
+            "mthi       $0                                                 \n\t"
+            "mtlo       %[c3]                                              \n\t"
+            "madd       %[t_re2],           %[m1]                          \n\t"
+            "mfhi       %[t_re1]                                           \n\t"
+            "mflo       %[t_im1]                                           \n\t"
+            "sll        %[t_re1],           %[t_re1],           16         \n\t"
+            "srl        %[t_im1],           %[t_im1],           16         \n\t"
+            "or         %[t_re1],           %[t_re1],           %[t_im1]   \n\t"
+            "mthi       $0                                                 \n\t"
+            "mtlo       %[c3]                                              \n\t"
+            "madd       %[t_im2],           %[m1]                          \n\t"
+            "mfhi       %[t_im1]                                           \n\t"
+            "mflo       %[m2]                                              \n\t"
+            "sll        %[t_im1],           %[t_im1],           16         \n\t"
+            "srl        %[m2],              %[m2],              16         \n\t"
+            "or         %[t_im1],           %[t_im1],           %[m2]      \n\t"
+            "sw         %[t_re1],           0(%[out_ptr])                  \n\t"
+            "sw         %[t_im1],           4(%[out_ptr])                  \n\t"
+            "addiu      %[ap_delayr_ptr],   %[ap_delayr_ptr],   8          \n\t"
+            "addiu      %[ap_delays_ptr],   %[ap_delays_ptr],   8          \n\t"
+            "addiu      %[delay_ptr],       %[delay_ptr],       8          \n\t"
+            "addiu      %[tg_ptr],          %[tg_ptr],          4          \n\t"
+            "addiu      %[out_ptr],         %[out_ptr],         8          \n\t"
+
+            : [out_ptr] "+r" (out_ptr), [delay_ptr] "+r" (delay_ptr),
+              [ap_delayr_ptr] "+r" (ap_delayr_ptr), [tg_ptr] "+r" (tg_ptr),
+              [ap_delays_ptr] "+r" (ap_delays_ptr),
+              [a_re] "=&r" (a_re), [m1] "=&r" (m1), [m2] "=&r" (m2)
+            : [t_im2] "r" (t_im2), [t_re2] "r" (t_re2),
+              [t_im1] "r" (t_im1), [t_re1] "r" (t_re1),
+              [ag2] "r" (ag2), [c1] "r" (c1), [c3] "r" (c3)
+            : "memory", "hi", "lo"
+        );
+    }
+}
+#endif /* HAVE_MIPS32R2 */
+#endif /* HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2 */
 #endif /* HAVE_INLINE_ASM */
 
 void ff_psdsp_init_mips(PSDSPContext *s)
@@ -455,5 +1053,8 @@ void ff_psdsp_init_mips(PSDSPContext *s)
     s->decorrelate            = ps_decorrelate_mips;
     s->stereo_interpolate[0]  = ps_stereo_interpolate_mips;
 #endif /* HAVE_MIPSFPU */
+#if HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2 || HAVE_MIPS32R2
+    s->decorrelate_fixed      = ps_decorrelate_fixed_mips;
+#endif /* HAVE_MIPSDSPR1 || HAVE_MIPSDSPR2 || HAVE_MIPS32R2 */
 #endif /* HAVE_INLINE_ASM */
 }
